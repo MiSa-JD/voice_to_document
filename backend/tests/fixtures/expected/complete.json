@@ -1,0 +1,36 @@
+{
+  "language": "ko",
+  "needs_speaker_review": false,
+  "segments": [
+    {
+      "start_ms": 0,
+      "end_ms": 900,
+      "local_speaker_id": "SPEAKER_00",
+      "text": "오늘 회의의 목표를 확인하겠습니다."
+    },
+    {
+      "start_ms": 1000,
+      "end_ms": 1900,
+      "local_speaker_id": "SPEAKER_01",
+      "text": "다음 주까지 초안을 준비하겠습니다."
+    }
+  ],
+  "classification": {
+    "category": "회의",
+    "confidence": 0.99,
+    "reason": "안건과 후속 작업을 논의하는 두 화자의 대화"
+  },
+  "summary": {
+    "purpose": "초안 준비 계획 확인",
+    "discussion": ["회의 목표를 확인함", "다음 주까지 초안을 준비하기로 함"],
+    "decisions": ["다음 주까지 초안을 준비함"],
+    "action_items": [
+      {
+        "assignee": null,
+        "due_date": null,
+        "task": "초안 준비"
+      }
+    ],
+    "open_questions": []
+  }
+}

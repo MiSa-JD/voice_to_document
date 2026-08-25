@@ -1,0 +1,74 @@
+x-backend-environment: &backend-environment
+  RECORDING_INPUT_DIR: ${RECORDING_INPUT_DIR:-/data/inbox}
+  TRANSCRIPT_ROOT: ${TRANSCRIPT_ROOT:-/data/transcripts}
+  SPEAKER_ROOT: ${SPEAKER_ROOT:-/data/speakers}
+  SUMMARY_ROOT: ${SUMMARY_ROOT:-/data/documents}
+  APP_DATA_DIR: ${APP_DATA_DIR:-/data/app}
+  SCAN_INTERVAL_SECONDS: ${SCAN_INTERVAL_SECONDS:-10}
+  FILE_STABLE_SECONDS: ${FILE_STABLE_SECONDS:-30}
+  CATEGORIES: ${CATEGORIES:-강의,일상 대화,회의,게임 목록,기타}
+  AUTO_SUMMARY_CATEGORIES: ${AUTO_SUMMARY_CATEGORIES:-강의,회의}
+  AI_MODE: ${AI_MODE:-fake}
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+
+x-backend-volumes: &backend-read-volumes
+  - ${DATA_ROOT:-./runtime}/inbox:${RECORDING_INPUT_DIR:-/data/inbox}:ro
+  - ${DATA_ROOT:-./runtime}/transcripts:${TRANSCRIPT_ROOT:-/data/transcripts}:ro
+  - ${DATA_ROOT:-./runtime}/speakers:${SPEAKER_ROOT:-/data/speakers}:ro
+  - ${DATA_ROOT:-./runtime}/documents:${SUMMARY_ROOT:-/data/documents}:ro
+  - ${DATA_ROOT:-./runtime}/app:${APP_DATA_DIR:-/data/app}
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["uvicorn", "app.api:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]
+    environment:
+      <<: *backend-environment
+      SERVICE_NAME: api
+    volumes: *backend-read-volumes
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=2)"]
+      interval: 3s
+      timeout: 3s
+      retries: 15
+      start_period: 3s
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["python", "-m", "app.worker"]
+    environment:
+      <<: *backend-environment
+      SERVICE_NAME: worker
+    volumes:
+      - ${DATA_ROOT:-./runtime}/inbox:${RECORDING_INPUT_DIR:-/data/inbox}:ro
+      - ${DATA_ROOT:-./runtime}/transcripts:${TRANSCRIPT_ROOT:-/data/transcripts}
+      - ${DATA_ROOT:-./runtime}/speakers:${SPEAKER_ROOT:-/data/speakers}
+      - ${DATA_ROOT:-./runtime}/documents:${SUMMARY_ROOT:-/data/documents}
+      - ${DATA_ROOT:-./runtime}/app:${APP_DATA_DIR:-/data/app}
+    depends_on:
+      api:
+        condition: service_healthy
+    stop_grace_period: 5s
+    restart: unless-stopped
+
+  web:
+    build:
+      context: .
+      dockerfile: frontend.Dockerfile
+    ports:
+      - ${APP_BIND_HOST:-127.0.0.1}:${APP_PORT:-8000}:8080
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--spider", "http://127.0.0.1:8080/"]
+      interval: 3s
+      timeout: 3s
+      retries: 15
+      start_period: 3s
+    restart: unless-stopped

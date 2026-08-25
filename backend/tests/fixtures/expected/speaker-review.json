@@ -1,0 +1,20 @@
+{
+  "language": "ko",
+  "needs_speaker_review": true,
+  "segments": [
+    {
+      "start_ms": 0,
+      "end_ms": 800,
+      "local_speaker_id": "SPEAKER_00",
+      "text": "첫 번째 임시 화자입니다."
+    },
+    {
+      "start_ms": 900,
+      "end_ms": 1800,
+      "local_speaker_id": "SPEAKER_01",
+      "text": "두 번째 임시 화자입니다."
+    }
+  ],
+  "classification": null,
+  "summary": null
+}

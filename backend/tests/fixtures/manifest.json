@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "fixtures": {
+    "e202a0e5517a6c4311f67c61e199b26bc1757af4c6b3ec0962fa61b4ff1807fb": {
+      "audio": "complete.m4a",
+      "expected": "expected/complete.json",
+      "scenario": "complete"
+    },
+    "7f8f1230daba23a52a634709c92f22499d52069fbe5199d017bdcaf794f6ead3": {
+      "audio": "speaker-review.m4a",
+      "expected": "expected/speaker-review.json",
+      "scenario": "speaker_review"
+    }
+  }
+}
