@@ -185,11 +185,11 @@ R0 준비 조건
 
 ### R0 종료 게이트
 
-- [ ] 단일 개발 명령 체계가 정해졌다.
-- [ ] 비민감 fixture와 기대 결과를 사용할 수 있다.
-- [ ] GPU 환경의 확보 여부가 명확하다.
-- [ ] pyannote 토큰과 LLM 개인정보 경로의 소유자가 정해졌다.
-- [ ] 미결정 항목이 어느 단계까지 결정되어야 하는지 기록되었다.
+- [x] 단일 개발 명령 체계가 정해졌다.
+- [x] 비민감 fixture와 기대 결과를 사용할 수 있다.
+- [x] GPU 환경의 확보 여부가 명확하다.
+- [x] pyannote 토큰과 LLM 개인정보 경로의 소유자가 정해졌다.
+- [x] 미결정 항목이 어느 단계까지 결정되어야 하는지 기록되었다.
 
 ---
 
@@ -276,11 +276,11 @@ R0 준비 조건
 
 ### R1 종료 게이트 — M0
 
-- [ ] `web`, `api`, `worker`가 Compose로 시작하고 종료된다.
-- [ ] 브라우저에서 `/health/ready`의 readiness 상태를 확인할 수 있다.
-- [ ] 잘못된 환경 설정은 시작 시 실패한다.
-- [ ] Python과 TypeScript의 format/lint/typecheck가 통과한다.
-- [ ] `.env`와 비밀값이 Git 추적 대상이 아니다.
+- [x] `web`, `api`, `worker`가 Compose로 시작하고 종료된다.
+- [x] 브라우저에서 `/health/ready`의 readiness 상태를 확인할 수 있다.
+- [x] 잘못된 환경 설정은 시작 시 실패한다.
+- [x] Python과 TypeScript의 format/lint/typecheck가 통과한다.
+- [x] `.env`와 비밀값이 Git 추적 대상이 아니다.
 
 ### 데모
 
@@ -376,11 +376,11 @@ Syncthing 입력 폴더의 완성된 m4a를 안전하게 한 번만 등록하고
 
 ### R2 종료 게이트 — M0.5
 
-- [ ] 안정된 신규 m4a가 recording/job으로 정확히 한 번 등록된다.
-- [ ] 복사 중 파일과 손상 파일이 정상 파일처럼 처리되지 않는다.
-- [ ] 같은 콘텐츠는 파일명이 달라도 중복 job이 생기지 않는다.
-- [ ] worker 재시작 후 DB 상태가 유지된다.
-- [ ] 입력 인수 시나리오 1~4가 자동 검증된다.
+- [x] 안정된 신규 m4a가 recording/job으로 정확히 한 번 등록된다.
+- [x] 복사 중 파일과 손상 파일이 정상 파일처럼 처리되지 않는다.
+- [x] 같은 콘텐츠는 파일명이 달라도 중복 job이 생기지 않는다.
+- [x] worker 재시작 후 DB 상태가 유지된다.
+- [x] 입력 인수 시나리오 1~4가 자동 검증된다.
 
 ### 데모
 
@@ -488,13 +488,13 @@ GPU와 외부 LLM 없이 발견부터 `COMPLETED`까지 전체 상태 전이, �
 
 ### R3 종료 게이트 — M1
 
-- [ ] fixture 한 건이 `DISCOVERED`에서 `COMPLETED`까지 간다.
-- [ ] transcript와 summary JSON/Markdown이 설계된 경로에 생성된다.
-- [ ] 브라우저에서 상태 변화와 최종 결과를 볼 수 있다.
-- [ ] 중간 실패 후 재시도해도 job/artifact가 중복되지 않는다.
-- [ ] OpenAPI와 프런트엔드 타입이 일치한다.
-- [ ] 외부 네트워크와 GPU 없이 전체 통합/E2E가 통과한다.
-- [ ] CI가 로컬과 같은 검증 진입점을 사용한다.
+- [x] fixture 한 건이 `DISCOVERED`에서 `COMPLETED`까지 간다.
+- [x] transcript와 summary JSON/Markdown이 설계된 경로에 생성된다.
+- [x] 브라우저에서 상태 변화와 최종 결과를 볼 수 있다.
+- [x] 중간 실패 후 재시도해도 job/artifact가 중복되지 않는다.
+- [x] OpenAPI와 프런트엔드 타입이 일치한다.
+- [x] 외부 네트워크와 GPU 없이 전체 통합/E2E가 통과한다.
+- [x] CI가 로컬과 같은 검증 진입점을 사용한다.
 
 ### 데모
 
@@ -1230,11 +1230,11 @@ Compose를 시작하고 fixture를 입력 폴더에 넣은 뒤 대시보드에�
 
 | 단계 | 상태 | 완료 증거 | 남은 blocker |
 |---|---|---|---|
-| R0 | `NOT STARTED` | - | - |
-| R1 | `NOT STARTED` | - | R0 |
-| R2 | `NOT STARTED` | - | R1 |
-| R3 | `NOT STARTED` | - | R2 |
-| R4 | `NOT STARTED` | - | Linux GPU, R3 |
+| R0 | `DONE` | [R0 결정·fixture 기록](progress/000_r0_01_development_commands.md), [재검증](progress/029_roadmap_gate_verification.md) | - |
+| R1 | `DONE` | [M0 구현 검증](progress/010_r1_06_common_checks.md), [재검증](progress/029_roadmap_gate_verification.md) | - |
+| R2 | `DONE` | [M0.5 Compose 검증](progress/018_r2_07_compose_completion.md), [재검증](progress/029_roadmap_gate_verification.md) | - |
+| R3 | `DONE` | [M1 구현 검증](progress/028_r3_m1_verification.md), [재검증](progress/029_roadmap_gate_verification.md) | - |
+| R4 | `BLOCKED` | [환경 결정 기록](03_development_environment.md) | Linux NVIDIA GPU runtime 검증, 실제 모델 의존성 고정 |
 | R5 | `NOT STARTED` | - | R4 |
 | R6 | `NOT STARTED` | - | 수동 확정 음성 표본, R5 |
 | R7 | `NOT STARTED` | - | R5, LLM 정책 |
