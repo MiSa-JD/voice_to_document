@@ -66,6 +66,19 @@ Linux 호스트의 사용자 ID가 기본 `1000:1000`과 다르면 `APP_RUN_UID=
 내부의 입력·transcript·speaker·summary·app 경로도 `.env`에서 관리하지만, 서로 겹치지 않는
 절대 경로여야 합니다.
 
+입력 폴더와 transcript를 서로 다른 호스트 위치에 두려면 컨테이너 경로는 그대로 두고 다음
+호스트 경로만 설정합니다.
+
+```dotenv
+RECORDING_INPUT_HOST_DIR=/mnt/syncthing/recordings
+TRANSCRIPT_HOST_DIR=/mnt/storage/transcripts
+```
+
+두 변수를 비워 두면 각각 `${DATA_ROOT}/inbox`, `${DATA_ROOT}/transcripts`를 사용합니다. 호스트
+디렉터리는 Compose 실행 전에 만들고, transcript 디렉터리는 `APP_RUN_UID:APP_RUN_GID`가 쓸 수
+있어야 합니다. `RECORDING_INPUT_DIR=/data/inbox`와 `TRANSCRIPT_ROOT=/data/transcripts`는
+컨테이너 내부 경로이므로 일반적으로 변경하지 않습니다.
+
 ## AI 모드
 
 speech와 document 공급자는 독립적으로 선택합니다. R4 실제 음성 모델과 기존 fake document를
