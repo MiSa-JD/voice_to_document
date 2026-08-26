@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+import errno
 import json
+import shutil
 import subprocess
+import tempfile
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -23,11 +28,140 @@ class MediaProbeError(RuntimeError):
         self.code = code
 
 
+class AudioNormalizationErrorCode(StrEnum):
+    FFMPEG_NOT_FOUND = "FFMPEG_NOT_FOUND"
+    FFMPEG_TIMEOUT = "FFMPEG_TIMEOUT"
+    AUDIO_STREAM_INVALID = "AUDIO_STREAM_INVALID"
+    DISK_FULL = "DISK_FULL"
+    NORMALIZATION_FAILED = "NORMALIZATION_FAILED"
+
+
+class AudioNormalizationError(RuntimeError):
+    def __init__(self, code: AudioNormalizationErrorCode, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+
+
 @dataclass(frozen=True)
 class MediaInfo:
     duration_ms: int
     audio_codec: str | None
     recorded_at: str | None
+
+
+@contextmanager
+def normalized_audio(
+    source: Path,
+    *,
+    work_root: Path | None = None,
+    timeout_seconds: float = 300,
+    executable: str = "ffmpeg",
+) -> Iterator[Path]:
+    """Yield a temporary mono 16 kHz PCM WAV without modifying the source."""
+    work_dir: Path | None = None
+    try:
+        try:
+            work_dir = Path(
+                tempfile.mkdtemp(
+                    prefix="voice-to-document-audio-",
+                    dir=work_root,
+                )
+            )
+        except OSError as error:
+            raise _normalization_os_error(error) from error
+
+        output = work_dir / "normalized.wav"
+        command = [
+            executable,
+            "-nostdin",
+            "-v",
+            "error",
+            "-y",
+            "-i",
+            str(source),
+            "-map",
+            "0:a:0",
+            "-vn",
+            "-map_metadata",
+            "-1",
+            "-ac",
+            "1",
+            "-ar",
+            "16000",
+            "-c:a",
+            "pcm_s16le",
+            str(output),
+        ]
+        try:
+            result = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                timeout=timeout_seconds,
+                check=False,
+            )
+        except FileNotFoundError as error:
+            raise AudioNormalizationError(
+                AudioNormalizationErrorCode.FFMPEG_NOT_FOUND,
+                "ffmpeg executable is unavailable",
+            ) from error
+        except subprocess.TimeoutExpired as error:
+            raise AudioNormalizationError(
+                AudioNormalizationErrorCode.FFMPEG_TIMEOUT,
+                "audio normalization timed out",
+            ) from error
+        except OSError as error:
+            raise _normalization_os_error(error) from error
+
+        if result.returncode != 0:
+            raise _normalization_process_error(result.stderr)
+        try:
+            complete = output.is_file() and output.stat().st_size > 0
+        except OSError as error:
+            raise _normalization_os_error(error) from error
+        if not complete:
+            raise AudioNormalizationError(
+                AudioNormalizationErrorCode.NORMALIZATION_FAILED,
+                "ffmpeg did not produce a complete normalized audio file",
+            )
+        yield output
+    finally:
+        if work_dir is not None:
+            shutil.rmtree(work_dir, ignore_errors=True)
+
+
+def _normalization_os_error(error: OSError) -> AudioNormalizationError:
+    if error.errno == errno.ENOSPC:
+        return AudioNormalizationError(
+            AudioNormalizationErrorCode.DISK_FULL,
+            "insufficient disk space for audio normalization",
+        )
+    return AudioNormalizationError(
+        AudioNormalizationErrorCode.NORMALIZATION_FAILED,
+        "audio normalization could not be completed",
+    )
+
+
+def _normalization_process_error(stderr: str | None) -> AudioNormalizationError:
+    detail = (stderr or "").casefold()
+    if "no space left on device" in detail:
+        return AudioNormalizationError(
+            AudioNormalizationErrorCode.DISK_FULL,
+            "insufficient disk space for audio normalization",
+        )
+    if (
+        "matches no streams" in detail
+        or "does not contain any stream" in detail
+        or "cannot find a matching stream" in detail
+    ):
+        return AudioNormalizationError(
+            AudioNormalizationErrorCode.AUDIO_STREAM_INVALID,
+            "media does not contain a usable audio stream",
+        )
+    return AudioNormalizationError(
+        AudioNormalizationErrorCode.NORMALIZATION_FAILED,
+        "ffmpeg could not normalize the audio",
+    )
 
 
 def probe_media(
