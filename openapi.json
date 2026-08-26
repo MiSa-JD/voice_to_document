@@ -432,6 +432,15 @@
       },
       "SegmentResponse": {
         "properties": {
+          "assignment_status": {
+            "enum": [
+              "assigned",
+              "overlap",
+              "unassigned"
+            ],
+            "title": "Assignment Status",
+            "type": "string"
+          },
           "end_ms": {
             "title": "End Ms",
             "type": "integer"
@@ -441,8 +450,22 @@
             "type": "string"
           },
           "local_speaker_id": {
-            "title": "Local Speaker Id",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Local Speaker Id"
+          },
+          "overlapping_speaker_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Overlapping Speaker Ids",
+            "type": "array"
           },
           "person_id": {
             "anyOf": [
@@ -484,6 +507,8 @@
           "start_ms",
           "end_ms",
           "local_speaker_id",
+          "assignment_status",
+          "overlapping_speaker_ids",
           "person_id",
           "speaker_name",
           "text",

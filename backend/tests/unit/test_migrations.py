@@ -70,7 +70,7 @@ def test_constraints_reject_invalid_recording(tmp_path: Path) -> None:
         )
 
 
-def test_version_one_database_upgrades_to_version_two(tmp_path: Path) -> None:
+def test_version_one_database_upgrades_to_current_version(tmp_path: Path) -> None:
     database_path = tmp_path / "app.db"
     with connect(database_path) as connection:
         connection.execute(
@@ -80,8 +80,57 @@ def test_version_one_database_upgrades_to_version_two(tmp_path: Path) -> None:
             connection.execute(statement)
         connection.execute("INSERT INTO schema_migrations(version, applied_at) VALUES (1, 'now')")
 
-    assert migrate_database(database_path) == 2
+    assert migrate_database(database_path) == CURRENT_SCHEMA_VERSION
 
     with connect(database_path) as connection:
         columns = {row["name"] for row in connection.execute("PRAGMA table_info(jobs)").fetchall()}
+        segment_columns = {
+            row["name"] for row in connection.execute("PRAGMA table_info(segments)").fetchall()
+        }
     assert {"input_revision", "settings_fingerprint"} <= columns
+    assert {"assignment_status", "overlapping_speaker_ids_json"} <= segment_columns
+
+
+def test_version_two_segments_are_preserved_as_assigned(tmp_path: Path) -> None:
+    database_path = tmp_path / "app.db"
+    with connect(database_path) as connection:
+        connection.execute(
+            "CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)"
+        )
+        for version in (1, 2):
+            for statement in MIGRATIONS[version]:
+                connection.execute(statement)
+            connection.execute(
+                "INSERT INTO schema_migrations(version, applied_at) VALUES (?, 'now')", (version,)
+            )
+        connection.execute(
+            """
+            INSERT INTO recordings(
+                id, content_sha256, source_path, original_name, size_bytes, duration_ms,
+                status, created_at, updated_at
+            ) VALUES ('recording', ?, '/source', 'source.m4a', 1, 1000, 'DISCOVERED', 'now', 'now')
+            """,
+            ("a" * 64,),
+        )
+        connection.execute(
+            """
+            INSERT INTO segments(
+                id, recording_id, start_ms, end_ms, text, local_speaker_id, revision
+            ) VALUES ('segment', 'recording', 0, 900, '테스트', 'SPEAKER_00', 1)
+            """
+        )
+
+    assert migrate_database(database_path) == CURRENT_SCHEMA_VERSION
+
+    with connect(database_path) as connection:
+        row = connection.execute(
+            """
+            SELECT local_speaker_id, assignment_status, overlapping_speaker_ids_json
+            FROM segments
+            """
+        ).fetchone()
+    assert dict(row) == {
+        "local_speaker_id": "SPEAKER_00",
+        "assignment_status": "assigned",
+        "overlapping_speaker_ids_json": "[]",
+    }

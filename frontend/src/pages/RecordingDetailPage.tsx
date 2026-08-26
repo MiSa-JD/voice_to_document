@@ -110,10 +110,7 @@ function RecordingDetail({ data }: { data: RecordingDetailResponse }) {
               <li key={segment.id}>
                 <time>{formatDuration(segment.start_ms)}</time>
                 <div>
-                  <strong>
-                    {segment.speaker_name ??
-                      `미확정(${segment.local_speaker_id})`}
-                  </strong>
+                  <strong>{speakerLabel(segment)}</strong>
                   <p>{segment.text}</p>
                 </div>
               </li>
@@ -161,6 +158,14 @@ function RecordingDetail({ data }: { data: RecordingDetailResponse }) {
       </section>
     </>
   );
+}
+
+function speakerLabel(segment: RecordingDetailResponse['segments'][number]) {
+  if (segment.speaker_name) return segment.speaker_name;
+  if (segment.assignment_status === 'unassigned') return '화자 미배정';
+  const primary = `미확정(${segment.local_speaker_id})`;
+  if (segment.assignment_status !== 'overlap') return primary;
+  return `${primary} · 겹침(${segment.overlapping_speaker_ids.join(', ')})`;
 }
 
 function SummaryList({

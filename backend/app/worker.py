@@ -10,6 +10,7 @@ from app.discovery import StabilityTracker
 from app.jobs import Job
 from app.log import configure_logging
 from app.pipeline import FakePipelineHandler
+from app.real_pipeline import RealSpeechPipelineHandler
 from app.runtime import JobHandler, discover_once, process_one_job
 
 
@@ -37,8 +38,10 @@ def run(settings: Settings | None = None, handler: JobHandler | None = None) -> 
         job_handler = handler
     elif config.effective_speech_mode == "fake" and config.effective_document_mode == "fake":
         job_handler = FakePipelineHandler(config, logger)
+    elif config.effective_speech_mode == "real" and config.effective_document_mode == "fake":
+        job_handler = RealSpeechPipelineHandler(config, logger)
     else:
-        raise RuntimeError("real speech pipeline is not implemented before R4-03")
+        raise RuntimeError("real document pipeline is not implemented before R7")
     logger.info("worker_started", extra={"stage": "readiness"})
     while not stop.is_set():
         discover_once(config, tracker, logger)

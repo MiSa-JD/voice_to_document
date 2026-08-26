@@ -216,12 +216,19 @@ export interface components {
         RecordingStatus: "DISCOVERED" | "TRANSCRIBING" | "SPEAKER_REVIEW" | "CLASSIFYING" | "READY_FOR_SUMMARY" | "SUMMARIZING" | "COMPLETED" | "FAILED";
         /** SegmentResponse */
         SegmentResponse: {
+            /**
+             * Assignment Status
+             * @enum {string}
+             */
+            assignment_status: "assigned" | "overlap" | "unassigned";
             /** End Ms */
             end_ms: number;
             /** Id */
             id: string;
             /** Local Speaker Id */
-            local_speaker_id: string;
+            local_speaker_id: string | null;
+            /** Overlapping Speaker Ids */
+            overlapping_speaker_ids: string[];
             /** Person Id */
             person_id: string | null;
             /** Revision */

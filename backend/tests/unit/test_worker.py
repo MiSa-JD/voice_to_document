@@ -7,11 +7,18 @@ import time
 from pathlib import Path
 from typing import Any
 
+import pytest
 
-def test_worker_stops_after_sigterm(settings_values: dict[str, Any]) -> None:
+
+@pytest.mark.parametrize(("speech_mode", "hf_token"), [("fake", ""), ("real", "test-token")])
+def test_worker_stops_after_sigterm(
+    settings_values: dict[str, Any], speech_mode: str, hf_token: str
+) -> None:
     environment = os.environ.copy()
     environment.update({key: str(value) for key, value in settings_values.items()})
     environment["PYTHONPATH"] = "backend"
+    environment["SPEECH_MODE"] = speech_mode
+    environment["HF_TOKEN"] = hf_token
     process = subprocess.Popen(
         [str(Path(".venv/bin/python")), "-m", "app.worker"],
         cwd=Path.cwd(),

@@ -45,9 +45,35 @@ test('transcript, category, summary, job 이력을 표시한다', async () => {
             start_ms: 0,
             end_ms: 900,
             local_speaker_id: 'SPEAKER_00',
+            assignment_status: 'assigned',
+            overlapping_speaker_ids: [],
             person_id: null,
             speaker_name: null,
             text: '오늘 회의의 목표를 확인하겠습니다.',
+            revision: 1,
+          },
+          {
+            id: 'overlap-segment-id',
+            start_ms: 1000,
+            end_ms: 1500,
+            local_speaker_id: 'SPEAKER_00',
+            assignment_status: 'overlap',
+            overlapping_speaker_ids: ['SPEAKER_00', 'SPEAKER_01'],
+            person_id: null,
+            speaker_name: null,
+            text: '겹쳐 말한 구간입니다.',
+            revision: 1,
+          },
+          {
+            id: 'unassigned-segment-id',
+            start_ms: 1600,
+            end_ms: 1900,
+            local_speaker_id: null,
+            assignment_status: 'unassigned',
+            overlapping_speaker_ids: [],
+            person_id: null,
+            speaker_name: null,
+            text: '화자 미배정 구간입니다.',
             revision: 1,
           },
         ],
@@ -86,6 +112,10 @@ test('transcript, category, summary, job 이력을 표시한다', async () => {
     screen.getByText('오늘 회의의 목표를 확인하겠습니다.'),
   ).toBeInTheDocument();
   expect(screen.getByText('미확정(SPEAKER_00)')).toBeInTheDocument();
+  expect(
+    screen.getByText('미확정(SPEAKER_00) · 겹침(SPEAKER_00, SPEAKER_01)'),
+  ).toBeInTheDocument();
+  expect(screen.getByText('화자 미배정')).toBeInTheDocument();
   expect(screen.getByText('초안 준비 계획 확인')).toBeInTheDocument();
   expect(screen.getByText('transcribe')).toBeInTheDocument();
 });

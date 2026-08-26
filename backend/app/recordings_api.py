@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Query
 from pydantic import BaseModel, Field
@@ -63,7 +63,9 @@ class SegmentResponse(BaseModel):
     id: str
     start_ms: int
     end_ms: int
-    local_speaker_id: str
+    local_speaker_id: str | None
+    assignment_status: Literal["assigned", "overlap", "unassigned"]
+    overlapping_speaker_ids: list[str]
     person_id: str | None
     speaker_name: str | None
     text: str
@@ -175,8 +177,8 @@ def create_recordings_router(settings: Settings) -> APIRouter:
                 raise ApiProblem(404, "RECORDING_NOT_FOUND", "녹음을 찾을 수 없습니다.")
             segments = connection.execute(
                 """
-                SELECT id, start_ms, end_ms, local_speaker_id, person_id,
-                       speaker_name, text, revision
+                SELECT id, start_ms, end_ms, local_speaker_id, assignment_status,
+                       overlapping_speaker_ids_json, person_id, speaker_name, text, revision
                 FROM segments WHERE recording_id = ? ORDER BY start_ms, end_ms, id
                 """,
                 (recording_id,),
@@ -199,7 +201,7 @@ def create_recordings_router(settings: Settings) -> APIRouter:
             ).fetchall()
         return RecordingDetailResponse(
             recording=_recording_item(dict(recording)),
-            segments=[SegmentResponse.model_validate(dict(row)) for row in segments],
+            segments=[_segment_response(dict(row)) for row in segments],
             artifacts=[ArtifactResponse.model_validate(dict(row)) for row in artifacts],
             jobs=[JobResponse.model_validate(dict(row)) for row in jobs],
             summary=_load_summary(settings.summary_root, artifacts),
@@ -211,6 +213,14 @@ def create_recordings_router(settings: Settings) -> APIRouter:
 def _recording_item(row: dict[str, Any]) -> RecordingItem:
     row["needs_speaker_review"] = bool(row["needs_speaker_review"])
     return RecordingItem.model_validate(row)
+
+
+def _segment_response(row: dict[str, Any]) -> SegmentResponse:
+    try:
+        row["overlapping_speaker_ids"] = json.loads(row.pop("overlapping_speaker_ids_json"))
+        return SegmentResponse.model_validate(row)
+    except (TypeError, ValueError, json.JSONDecodeError) as error:
+        raise ApiProblem(500, "INVALID_SEGMENT", "발화 구간을 읽을 수 없습니다.") from error
 
 
 def _load_summary(root: Path, artifacts: list[Any]) -> MeetingSummary | None:

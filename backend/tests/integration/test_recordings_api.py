@@ -52,6 +52,11 @@ def test_completed_recording_list_and_detail(settings_values: dict[str, Any]) ->
         "SPEAKER_00",
         "SPEAKER_01",
     ]
+    assert [segment["assignment_status"] for segment in payload["segments"]] == [
+        "assigned",
+        "assigned",
+    ]
+    assert all(segment["overlapping_speaker_ids"] == [] for segment in payload["segments"])
     assert len(payload["artifacts"]) == 4
     assert {job["status"] for job in payload["jobs"]} == {"succeeded"}
     assert payload["summary"]["purpose"] == "초안 준비 계획 확인"
