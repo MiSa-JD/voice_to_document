@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +16,8 @@ def test_valid_fake_settings(settings_values: dict[str, Any]) -> None:
     assert settings.effective_document_mode == "fake"
     assert settings.categories == ("강의", "일상 대화", "회의", "게임 목록", "기타")
     assert settings.database_path == Path(settings_values["APP_DATA_DIR"]) / "app.db"
+    assert settings.whisper_batch_size == 4
+    assert settings.whisper_language is None
     assert "hf_token" not in settings.public_summary()
 
 
@@ -68,6 +71,77 @@ def test_real_speech_only_requires_hf_token(settings_values: dict[str, Any]) -> 
 
     assert settings.effective_speech_mode == "real"
     assert settings.effective_document_mode == "fake"
+
+
+def test_whisper_language_blank_means_auto_detection(settings_values: dict[str, Any]) -> None:
+    settings_values["WHISPER_LANGUAGE"] = "  "
+
+    settings = Settings(**settings_values)
+
+    assert settings.whisper_language is None
+
+
+def test_rejects_non_positive_whisper_batch_size(settings_values: dict[str, Any]) -> None:
+    settings_values["WHISPER_BATCH_SIZE"] = 0
+
+    with pytest.raises(ValidationError, match="WHISPER_BATCH_SIZE"):
+        Settings(**settings_values)
+
+
+@pytest.mark.parametrize("value", [Path("relative/cache"), Path("/missing-model-cache")])
+def test_real_speech_validates_model_cache_root(
+    settings_values: dict[str, Any],
+    value: Path,
+) -> None:
+    settings_values.update(
+        {
+            "SPEECH_MODE": "real",
+            "HF_TOKEN": "hf_private_test_value",
+            "MODEL_CACHE_ROOT": value,
+        }
+    )
+
+    with pytest.raises(ValidationError, match="MODEL_CACHE_ROOT"):
+        Settings(**settings_values)
+
+
+def test_real_speech_rejects_model_cache_overlapping_results(
+    settings_values: dict[str, Any],
+) -> None:
+    settings_values.update(
+        {
+            "SPEECH_MODE": "real",
+            "HF_TOKEN": "hf_private_test_value",
+            "MODEL_CACHE_ROOT": settings_values["TRANSCRIPT_ROOT"],
+        }
+    )
+
+    with pytest.raises(ValidationError, match="MODEL_CACHE_ROOT and TRANSCRIPT_ROOT"):
+        Settings(**settings_values)
+
+
+def test_real_speech_requires_writable_model_cache(
+    settings_values: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cache_root = Path(settings_values["MODEL_CACHE_ROOT"]).resolve()
+    real_access = os.access
+
+    def fake_access(path: str | os.PathLike[str], mode: int) -> bool:
+        if Path(path).resolve() == cache_root and mode == os.W_OK | os.X_OK:
+            return False
+        return real_access(path, mode)
+
+    monkeypatch.setattr(os, "access", fake_access)
+    settings_values.update(
+        {
+            "SPEECH_MODE": "real",
+            "HF_TOKEN": "hf_private_test_value",
+        }
+    )
+
+    with pytest.raises(ValidationError, match="MODEL_CACHE_ROOT is not writable"):
+        Settings(**settings_values)
 
 
 def test_real_document_requires_llm_variable_names(settings_values: dict[str, Any]) -> None:

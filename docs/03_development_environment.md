@@ -12,6 +12,8 @@
 - 2026-08-26 `make model-smoke` 통과: RTX 3060, driver 535.309.01, Torch CUDA 12.8,
   Torch 2.8.0+cu128, WhisperX 3.8.6, pyannote.audio 4.0.7
 - 일반 개발·CI·기본 Compose는 계속 fake runtime을 사용하며 GPU를 예약하지 않는다.
+- 실제 전사 smoke는 `make transcription-smoke`로 실행하며 R4-02 표준화 후 WhisperX 3.8.6의
+  `load_model` → `load_audio` → `model.transcribe(batch_size=4)` 흐름을 사용한다.
 
 ## pyannote 접근
 
@@ -37,5 +39,10 @@
 ## R4 잔여 확인 항목
 
 - 고정 조합: WhisperX 3.8.6, PyTorch/Torchaudio 2.8.0, Torchvision 0.23.0, CUDA 12.8 wheel
-- `large-v3`와 pyannote 모델 cache의 실제 사용량 및 사용 가능 디스크
-- RTX 3060 12GB에서 재현 가능한 batch size와 compute type
+- `WHISPER_LANGUAGE` 빈 값은 자동 감지 `None`으로 정규화한다.
+- `WHISPER_BATCH_SIZE` 기본값은 RTX 3060 12GB의 초기 보수값인 `4`이며 최적값은 R4-08에서
+  평가한다.
+- model cache는 결과물과 분리된 `MODEL_CACHE_ROOT`에 저장한다. 실제 speech runtime에서는
+  절대 경로, 존재 여부, 쓰기 권한과 결과 root 비중첩을 시작 시 검증한다.
+- `large-v3`와 pyannote diarization 모델 cache의 최종 사용량 및 사용 가능 디스크
+- 실제 녹음 기준 전사 정확도와 RTX 3060 12GB의 최적 batch size/compute type
