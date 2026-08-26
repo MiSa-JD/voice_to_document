@@ -34,6 +34,7 @@ make compose-smoke
 make model-smoke
 make transcription-smoke
 make alignment-smoke
+make diarization-smoke
 ```
 
 `make model-smoke`는 Linux x86_64 NVIDIA 장비에서 CUDA와 고정된 Torch 2.8,
@@ -49,6 +50,11 @@ GPU 메모리만 포함하고 transcript 전문, 원본 경로, `HF_TOKEN`은 �
 `make alignment-smoke`는 같은 표준화·실제 전사 흐름 뒤에 감지 언어용 WhisperX alignment
 모델을 로드해 단어 시간을 보정합니다. 출력 JSON에는 전사·정렬 fingerprint, 언어, segment와
 word 개수, 단어 시간이 생성된 segment 수, 처리 시간, cache와 GPU 메모리만 포함합니다.
+
+`make diarization-smoke`는 alignment 뒤에
+`pyannote/speaker-diarization-community-1`을 실행하고 녹음 안의 화자를 `SPEAKER_00` 형식으로
+정규화합니다. 출력 JSON에는 모델 fingerprint, 화자·turn 수, 배정·겹침·미배정 segment 수,
+처리 시간, cache와 GPU 메모리만 포함하며 transcript 전문은 출력하지 않습니다.
 
 기본 `make install`과 Compose는 speech extra를 설치하지 않으므로 GPU, `HF_TOKEN`, LLM API 키를
 요구하지 않습니다. 모델 image의 다운로드 cache는 애플리케이션 결과와 분리된
@@ -114,6 +120,7 @@ GPU runtime만 검증하려면 NVIDIA driver와 NVIDIA Container Toolkit을 준�
 make model-smoke
 make transcription-smoke
 make alignment-smoke
+make diarization-smoke
 ```
 
 성공 출력은 GPU/driver/CUDA와 패키지 버전만 포함하며 토큰이나 전체 환경 변수는 출력하지
