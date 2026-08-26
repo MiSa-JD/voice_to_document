@@ -28,12 +28,15 @@ def test_registration_creates_recording_and_job_together(tmp_path: Path) -> None
     assert job["status"] == "queued"
 
 
-def test_same_hash_concurrently_creates_one_recording_and_job(tmp_path: Path) -> None:
+@pytest.mark.parametrize("iteration", range(10))
+def test_same_hash_concurrently_creates_one_recording_and_job(
+    tmp_path: Path, iteration: int
+) -> None:
     first = tmp_path / "first.m4a"
     second = tmp_path / "second.m4a"
     first.write_bytes(b"same")
     second.write_bytes(b"same")
-    database_path = tmp_path / "app.db"
+    database_path = tmp_path / f"app-{iteration}.db"
 
     with ThreadPoolExecutor(max_workers=2) as executor:
         results = list(

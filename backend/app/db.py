@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -166,13 +167,28 @@ MIGRATIONS: dict[int, tuple[str, ...]] = {
 
 
 def connect(database_path: Path) -> sqlite3.Connection:
-    connection = sqlite3.connect(database_path, timeout=5)
-    connection.row_factory = sqlite3.Row
-    connection.execute("PRAGMA foreign_keys = ON")
-    connection.execute("PRAGMA busy_timeout = 5000")
-    connection.execute("PRAGMA journal_mode = WAL")
-    connection.execute("PRAGMA synchronous = NORMAL")
-    return connection
+    for attempt in range(6):
+        connection = sqlite3.connect(database_path, timeout=5)
+        connection.row_factory = sqlite3.Row
+        try:
+            connection.execute("PRAGMA foreign_keys = ON")
+            connection.execute("PRAGMA busy_timeout = 5000")
+            journal_mode = str(connection.execute("PRAGMA journal_mode").fetchone()[0])
+            if journal_mode.casefold() != "wal":
+                connection.execute("PRAGMA journal_mode = WAL")
+            connection.execute("PRAGMA synchronous = NORMAL")
+            return connection
+        except sqlite3.OperationalError as error:
+            connection.close()
+            if attempt == 5 or not _is_database_busy(error):
+                raise
+            time.sleep(0.01 * (2**attempt))
+    raise AssertionError("SQLite connection retry loop did not return")
+
+
+def _is_database_busy(error: sqlite3.OperationalError) -> bool:
+    message = str(error).casefold()
+    return "locked" in message or "busy" in message
 
 
 def check_database(database_path: Path) -> None:
