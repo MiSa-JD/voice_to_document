@@ -32,11 +32,18 @@ make test-e2e
 make test
 make compose-smoke
 make model-smoke
+make transcription-smoke
 ```
 
 `make model-smoke`는 Linux x86_64 NVIDIA 장비에서 CUDA와 고정된 Torch 2.8,
 WhisperX 3.8.6, pyannote import를 확인합니다. 이 명령은 실제 모델을 다운로드하거나
 녹음을 전사하지 않습니다. `make model-eval`은 R4-08에서 실제 평가가 연결된 뒤 사용합니다.
+
+`make transcription-smoke`는 GPU model image에서 합성 M4A fixture를 mono 16 kHz PCM WAV로
+표준화한 뒤 WhisperX `large-v3`를 실제로 로드하고 batch size `4`로 전사합니다. 첫 실행은 모델
+다운로드 때문에 오래 걸리며 `MODEL_CACHE_ROOT` cache를 이후 실행에서 재사용합니다. 출력 JSON은
+GPU/driver/CUDA, 모델 fingerprint, 감지 언어, segment 수, 처리 시간, cache 사용량과 관찰된 최대
+GPU 메모리만 포함하고 transcript 전문, 원본 경로, `HF_TOKEN`은 포함하지 않습니다.
 
 기본 `make install`과 Compose는 speech extra를 설치하지 않으므로 GPU, `HF_TOKEN`, LLM API 키를
 요구하지 않습니다. 모델 image의 다운로드 cache는 애플리케이션 결과와 분리된
@@ -91,13 +98,18 @@ HF_TOKEN=your-private-token
 ```
 
 `SPEECH_MODE=real`은 `HF_TOKEN`만 요구합니다. LLM 관련 변수는 `DOCUMENT_MODE=real`에서만
-필수입니다. 기존 `AI_MODE`는 직접 실행 호환용으로 읽지만 새 설정에서는 사용하지 않습니다.
+필수입니다. `WHISPER_LANGUAGE`를 비우면 언어를 자동 감지하며 `WHISPER_BATCH_SIZE` 기본값은
+RTX 3060 12GB용 보수적 시작값인 `4`입니다. 실제 speech runtime의 `MODEL_CACHE_ROOT`는 결과
+디렉터리와 겹치지 않는, 존재하고 쓰기 가능한 절대 경로여야 합니다. 기존 `AI_MODE`는 직접 실행
+호환용으로 읽지만 새 설정에서는 사용하지 않습니다.
 
 GPU runtime만 검증하려면 NVIDIA driver와 NVIDIA Container Toolkit을 준비한 뒤 실행합니다.
 
 ```sh
 make model-smoke
+make transcription-smoke
 ```
 
 성공 출력은 GPU/driver/CUDA와 패키지 버전만 포함하며 토큰이나 전체 환경 변수는 출력하지
-않습니다.
+않습니다. 실제 전사 smoke의 합성 tone/무음 결과는 품질이나 최적 batch size를 판단하는 자료로
+사용하지 않으며 해당 평가는 R4-08에서 수행합니다.

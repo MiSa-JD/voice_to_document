@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 from typing import Literal, Self
 
-from pydantic import AliasChoices, Field, SecretStr, model_validator
+from pydantic import AliasChoices, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -50,6 +50,8 @@ class Settings(BaseSettings):
     whisper_device: str = Field(default="cuda", validation_alias="WHISPER_DEVICE")
     whisper_compute_type: str = Field(default="float16", validation_alias="WHISPER_COMPUTE_TYPE")
     whisper_language: str | None = Field(default=None, validation_alias="WHISPER_LANGUAGE")
+    whisper_batch_size: int = Field(default=4, gt=0, validation_alias="WHISPER_BATCH_SIZE")
+    model_cache_root: Path = Field(default=Path("/models"), validation_alias="MODEL_CACHE_ROOT")
     hf_token: SecretStr | None = Field(default=None, validation_alias="HF_TOKEN")
 
     llm_provider: str | None = Field(default=None, validation_alias="LLM_PROVIDER")
@@ -90,6 +92,13 @@ class Settings(BaseSettings):
     @property
     def uses_legacy_ai_mode(self) -> bool:
         return self.ai_mode is not None and self.speech_mode is None and self.document_mode is None
+
+    @field_validator("whisper_language", mode="before")
+    @classmethod
+    def normalize_whisper_language(cls, value: object) -> object:
+        if isinstance(value, str):
+            return value.strip() or None
+        return value
 
     @model_validator(mode="after")
     def validate_environment(self) -> Self:
@@ -138,6 +147,24 @@ class Settings(BaseSettings):
 
         if self.effective_speech_mode == "real" and not _has_value(self.hf_token):
             raise ValueError("real SPEECH_MODE requires: HF_TOKEN")
+        if self.effective_speech_mode == "real":
+            if not self.model_cache_root.is_absolute():
+                raise ValueError("MODEL_CACHE_ROOT must be an absolute path")
+            try:
+                model_cache_root = self.model_cache_root.resolve(strict=True)
+            except FileNotFoundError as error:
+                raise ValueError("MODEL_CACHE_ROOT does not exist") from error
+            if not model_cache_root.is_dir():
+                raise ValueError("MODEL_CACHE_ROOT must be a directory")
+            if not os.access(model_cache_root, os.W_OK | os.X_OK):
+                raise ValueError("MODEL_CACHE_ROOT is not writable for real speech")
+            for name, root in resolved.items():
+                if (
+                    model_cache_root == root
+                    or model_cache_root in root.parents
+                    or root in model_cache_root.parents
+                ):
+                    raise ValueError(f"MODEL_CACHE_ROOT and {name} must not overlap")
 
         if self.effective_document_mode == "real":
             required = {
@@ -156,6 +183,7 @@ class Settings(BaseSettings):
             "speech_mode": self.effective_speech_mode,
             "document_mode": self.effective_document_mode,
             "whisper_model": self.whisper_model,
+            "whisper_batch_size": self.whisper_batch_size,
             "categories": self.categories,
             "auto_summary_categories": self.auto_summary_categories,
             "log_level": self.log_level,

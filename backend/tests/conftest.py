@@ -8,7 +8,7 @@ import pytest
 
 @pytest.fixture
 def settings_values(tmp_path: Path) -> dict[str, Any]:
-    names = ["inbox", "transcripts", "speakers", "documents", "app"]
+    names = ["inbox", "transcripts", "speakers", "documents", "app", "model-cache"]
     paths = {name: tmp_path / name for name in names}
     for path in paths.values():
         path.mkdir()
@@ -18,6 +18,7 @@ def settings_values(tmp_path: Path) -> dict[str, Any]:
         "SPEAKER_ROOT": paths["speakers"],
         "SUMMARY_ROOT": paths["documents"],
         "APP_DATA_DIR": paths["app"],
+        "MODEL_CACHE_ROOT": paths["model-cache"],
         "SPEECH_MODE": "fake",
         "DOCUMENT_MODE": "fake",
         "HF_TOKEN": "",
