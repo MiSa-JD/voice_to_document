@@ -11,9 +11,13 @@ from typing import Protocol, cast
 
 from pydantic import SecretStr
 
+from app.speech_failures import is_model_access_denied, is_model_download_failure
+
 
 class WhisperXErrorCode(StrEnum):
     MODEL_OOM = "MODEL_OOM"
+    MODEL_ACCESS_DENIED = "MODEL_ACCESS_DENIED"
+    MODEL_DOWNLOAD_FAILED = "MODEL_DOWNLOAD_FAILED"
     MODEL_LOAD_FAILED = "MODEL_LOAD_FAILED"
     TRANSCRIPTION_FAILED = "TRANSCRIPTION_FAILED"
     INVALID_RESPONSE = "INVALID_RESPONSE"
@@ -170,6 +174,16 @@ class WhisperXAdapter:
                 raise WhisperXAdapterError(
                     WhisperXErrorCode.MODEL_OOM,
                     "WhisperX ran out of memory while loading the model",
+                ) from error
+            if is_model_access_denied(error):
+                raise WhisperXAdapterError(
+                    WhisperXErrorCode.MODEL_ACCESS_DENIED,
+                    "The WhisperX model could not be accessed with the configured token",
+                ) from error
+            if is_model_download_failure(error):
+                raise WhisperXAdapterError(
+                    WhisperXErrorCode.MODEL_DOWNLOAD_FAILED,
+                    "The WhisperX model could not be downloaded",
                 ) from error
             raise WhisperXAdapterError(
                 WhisperXErrorCode.MODEL_LOAD_FAILED,

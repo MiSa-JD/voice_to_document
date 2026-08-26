@@ -296,6 +296,10 @@ def test_rejects_invalid_diarization_response(tmp_path: Path, result: object) ->
             DiarizationErrorCode.MODEL_ACCESS_DENIED,
         ),
         (
+            FakeRuntime([], model_error=RuntimeError("network timed out")),
+            DiarizationErrorCode.MODEL_DOWNLOAD_FAILED,
+        ),
+        (
             FakeRuntime([], run_error=RuntimeError("run failed")),
             DiarizationErrorCode.DIARIZATION_FAILED,
         ),

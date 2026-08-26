@@ -281,6 +281,14 @@ def test_rejects_invalid_alignment_response(tmp_path: Path, result: object) -> N
             AlignmentErrorCode.UNSUPPORTED_LANGUAGE,
         ),
         (
+            FakeRuntime(valid_result(), model_error=RuntimeError("403 gated repo")),
+            AlignmentErrorCode.MODEL_ACCESS_DENIED,
+        ),
+        (
+            FakeRuntime(valid_result(), model_error=RuntimeError("network timed out")),
+            AlignmentErrorCode.MODEL_DOWNLOAD_FAILED,
+        ),
+        (
             FakeRuntime(valid_result(), align_error=RuntimeError("align failed")),
             AlignmentErrorCode.ALIGNMENT_FAILED,
         ),

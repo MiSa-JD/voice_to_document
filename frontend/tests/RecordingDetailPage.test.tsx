@@ -141,3 +141,53 @@ test('404를 일반 빈 상세로 오해하지 않는다', async () => {
   );
   expect(screen.queryByText('생성된 요약이 없습니다.')).not.toBeInTheDocument();
 });
+
+test('실패 코드와 사용자 조치, 자동 재시도 상태를 표시한다', async () => {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn().mockResolvedValue(
+      response(200, {
+        recording: {
+          id: 'recording-id',
+          original_name: 'failed.m4a',
+          duration_ms: 2000,
+          status: 'FAILED',
+          category: null,
+          category_confidence: null,
+          category_reason: null,
+          needs_speaker_review: false,
+          revision: 1,
+          created_at: 'now',
+          updated_at: 'now',
+        },
+        segments: [],
+        artifacts: [],
+        jobs: [
+          {
+            id: 'job-id',
+            kind: 'transcribe',
+            status: 'queued',
+            attempts: 1,
+            input_revision: 1,
+            settings_fingerprint: 'real',
+            error_code: 'MODEL_DOWNLOAD_FAILED',
+            error_message:
+              '모델을 내려받지 못했습니다. 네트워크와 모델 캐시 권한을 확인하세요.',
+            created_at: 'now',
+            updated_at: 'now',
+          },
+        ],
+        summary: null,
+      }),
+    ),
+  );
+
+  renderDetail();
+
+  expect(
+    await screen.findByRole('heading', { name: 'failed.m4a' }),
+  ).toBeInTheDocument();
+  expect(screen.getByText('자동 재시도 대기')).toBeInTheDocument();
+  expect(screen.getByText('MODEL_DOWNLOAD_FAILED')).toBeInTheDocument();
+  expect(screen.getByRole('status')).toHaveTextContent('네트워크');
+});

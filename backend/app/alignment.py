@@ -9,11 +9,14 @@ from importlib import import_module, metadata
 from pathlib import Path
 from typing import Protocol, cast
 
+from app.speech_failures import is_model_access_denied, is_model_download_failure
 from app.transcription import TranscriptionSegment, _is_out_of_memory
 
 
 class AlignmentErrorCode(StrEnum):
     MODEL_OOM = "MODEL_OOM"
+    MODEL_ACCESS_DENIED = "MODEL_ACCESS_DENIED"
+    MODEL_DOWNLOAD_FAILED = "MODEL_DOWNLOAD_FAILED"
     MODEL_LOAD_FAILED = "MODEL_LOAD_FAILED"
     ALIGNMENT_FAILED = "ALIGNMENT_FAILED"
     UNSUPPORTED_LANGUAGE = "UNSUPPORTED_LANGUAGE"
@@ -220,6 +223,16 @@ class WhisperXAlignmentAdapter:
                 raise WhisperXAlignmentError(
                     AlignmentErrorCode.UNSUPPORTED_LANGUAGE,
                     "WhisperX has no alignment model for the detected language",
+                ) from error
+            if is_model_access_denied(error):
+                raise WhisperXAlignmentError(
+                    AlignmentErrorCode.MODEL_ACCESS_DENIED,
+                    "The alignment model could not be accessed",
+                ) from error
+            if is_model_download_failure(error):
+                raise WhisperXAlignmentError(
+                    AlignmentErrorCode.MODEL_DOWNLOAD_FAILED,
+                    "The alignment model could not be downloaded",
                 ) from error
             raise WhisperXAlignmentError(
                 AlignmentErrorCode.MODEL_LOAD_FAILED,
