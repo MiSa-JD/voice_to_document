@@ -27,7 +27,8 @@ def schema_text() -> str:
                 "SPEAKER_ROOT": paths["speakers"],
                 "SUMMARY_ROOT": paths["documents"],
                 "APP_DATA_DIR": paths["app"],
-                "AI_MODE": "fake",
+                "SPEECH_MODE": "fake",
+                "DOCUMENT_MODE": "fake",
                 "SERVICE_NAME": "test",
             }
         )

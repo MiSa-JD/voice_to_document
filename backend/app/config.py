@@ -33,7 +33,19 @@ class Settings(BaseSettings):
         validation_alias="AUTO_SUMMARY_CATEGORIES",
     )
 
-    ai_mode: Literal["fake", "real"] = Field(default="fake", validation_alias="AI_MODE")
+    ai_mode: Literal["fake", "real"] | None = Field(
+        default=None,
+        validation_alias="AI_MODE",
+        exclude=True,
+    )
+    speech_mode: Literal["fake", "real"] | None = Field(
+        default=None,
+        validation_alias="SPEECH_MODE",
+    )
+    document_mode: Literal["fake", "real"] | None = Field(
+        default=None,
+        validation_alias="DOCUMENT_MODE",
+    )
     whisper_model: str = Field(default="large-v3", validation_alias="WHISPER_MODEL")
     whisper_device: str = Field(default="cuda", validation_alias="WHISPER_DEVICE")
     whisper_compute_type: str = Field(default="float16", validation_alias="WHISPER_COMPUTE_TYPE")
@@ -45,8 +57,8 @@ class Settings(BaseSettings):
     llm_api_key: SecretStr | None = Field(default=None, validation_alias="LLM_API_KEY")
     llm_model: str | None = Field(default=None, validation_alias="LLM_MODEL")
 
-    app_bind_host: str = Field(default="127.0.0.1", validation_alias="APP_BIND_HOST")
-    app_port: int = Field(default=8000, ge=1, le=65535, validation_alias="APP_PORT")
+    app_bind_host: str = Field(default="0.0.0.0", validation_alias="APP_BIND_HOST")
+    app_port: int = Field(default=38000, ge=1, le=65535, validation_alias="APP_PORT")
     log_level: str = Field(
         default="INFO",
         validation_alias=AliasChoices("LOG_LEVEL", "UVICORN_LOG_LEVEL"),
@@ -66,6 +78,18 @@ class Settings(BaseSettings):
     @property
     def database_path(self) -> Path:
         return self.app_data_dir / "app.db"
+
+    @property
+    def effective_speech_mode(self) -> Literal["fake", "real"]:
+        return self.speech_mode or self.ai_mode or "fake"
+
+    @property
+    def effective_document_mode(self) -> Literal["fake", "real"]:
+        return self.document_mode or self.ai_mode or "fake"
+
+    @property
+    def uses_legacy_ai_mode(self) -> bool:
+        return self.ai_mode is not None and self.speech_mode is None and self.document_mode is None
 
     @model_validator(mode="after")
     def validate_environment(self) -> Self:
@@ -112,9 +136,11 @@ class Settings(BaseSettings):
                 + ", ".join(sorted(unknown))
             )
 
-        if self.ai_mode == "real":
+        if self.effective_speech_mode == "real" and not _has_value(self.hf_token):
+            raise ValueError("real SPEECH_MODE requires: HF_TOKEN")
+
+        if self.effective_document_mode == "real":
             required = {
-                "HF_TOKEN": self.hf_token,
                 "LLM_PROVIDER": self.llm_provider,
                 "LLM_BASE_URL": self.llm_base_url,
                 "LLM_API_KEY": self.llm_api_key,
@@ -122,12 +148,13 @@ class Settings(BaseSettings):
             }
             missing = [name for name, value in required.items() if not _has_value(value)]
             if missing:
-                raise ValueError("real AI_MODE requires: " + ", ".join(missing))
+                raise ValueError("real DOCUMENT_MODE requires: " + ", ".join(missing))
         return self
 
     def public_summary(self) -> dict[str, object]:
         return {
-            "ai_mode": self.ai_mode,
+            "speech_mode": self.effective_speech_mode,
+            "document_mode": self.effective_document_mode,
             "whisper_model": self.whisper_model,
             "categories": self.categories,
             "auto_summary_categories": self.auto_summary_categories,

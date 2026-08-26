@@ -8,12 +8,22 @@ x-backend-environment: &backend-environment
   FILE_STABLE_SECONDS: ${FILE_STABLE_SECONDS:-30}
   CATEGORIES: ${CATEGORIES:-강의,일상 대화,회의,게임 목록,기타}
   AUTO_SUMMARY_CATEGORIES: ${AUTO_SUMMARY_CATEGORIES:-강의,회의}
-  AI_MODE: ${AI_MODE:-fake}
+  SPEECH_MODE: ${SPEECH_MODE:-${AI_MODE:-fake}}
+  DOCUMENT_MODE: ${DOCUMENT_MODE:-${AI_MODE:-fake}}
+  WHISPER_MODEL: ${WHISPER_MODEL:-large-v3}
+  WHISPER_DEVICE: ${WHISPER_DEVICE:-cuda}
+  WHISPER_COMPUTE_TYPE: ${WHISPER_COMPUTE_TYPE:-float16}
+  WHISPER_LANGUAGE: ${WHISPER_LANGUAGE:-}
+  HF_TOKEN: ${HF_TOKEN:-}
+  LLM_PROVIDER: ${LLM_PROVIDER:-}
+  LLM_BASE_URL: ${LLM_BASE_URL:-}
+  LLM_API_KEY: ${LLM_API_KEY:-}
+  LLM_MODEL: ${LLM_MODEL:-}
   LOG_LEVEL: ${LOG_LEVEL:-INFO}
 
 x-backend-volumes: &backend-read-volumes
-  - ${DATA_ROOT:-./runtime}/inbox:${RECORDING_INPUT_DIR:-/data/inbox}:ro
-  - ${DATA_ROOT:-./runtime}/transcripts:${TRANSCRIPT_ROOT:-/data/transcripts}:ro
+  - ${RECORDING_INPUT_HOST_DIR:-${DATA_ROOT:-./runtime}/inbox}:${RECORDING_INPUT_DIR:-/data/inbox}:ro
+  - ${TRANSCRIPT_HOST_DIR:-${DATA_ROOT:-./runtime}/transcripts}:${TRANSCRIPT_ROOT:-/data/transcripts}:ro
   - ${DATA_ROOT:-./runtime}/speakers:${SPEAKER_ROOT:-/data/speakers}:ro
   - ${DATA_ROOT:-./runtime}/documents:${SUMMARY_ROOT:-/data/documents}:ro
   - ${DATA_ROOT:-./runtime}/app:${APP_DATA_DIR:-/data/app}
@@ -23,10 +33,12 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      target: runtime
     command: ["uvicorn", "app.api:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]
     environment:
       <<: *backend-environment
       SERVICE_NAME: api
+    user: "${APP_RUN_UID:-1000}:${APP_RUN_GID:-1000}"
     volumes: *backend-read-volumes
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=2)"]
@@ -40,13 +52,15 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      target: runtime
     command: ["python", "-m", "app.worker"]
     environment:
       <<: *backend-environment
       SERVICE_NAME: worker
+    user: "${APP_RUN_UID:-1000}:${APP_RUN_GID:-1000}"
     volumes:
-      - ${DATA_ROOT:-./runtime}/inbox:${RECORDING_INPUT_DIR:-/data/inbox}:ro
-      - ${DATA_ROOT:-./runtime}/transcripts:${TRANSCRIPT_ROOT:-/data/transcripts}
+      - ${RECORDING_INPUT_HOST_DIR:-${DATA_ROOT:-./runtime}/inbox}:${RECORDING_INPUT_DIR:-/data/inbox}:ro
+      - ${TRANSCRIPT_HOST_DIR:-${DATA_ROOT:-./runtime}/transcripts}:${TRANSCRIPT_ROOT:-/data/transcripts}
       - ${DATA_ROOT:-./runtime}/speakers:${SPEAKER_ROOT:-/data/speakers}
       - ${DATA_ROOT:-./runtime}/documents:${SUMMARY_ROOT:-/data/documents}
       - ${DATA_ROOT:-./runtime}/app:${APP_DATA_DIR:-/data/app}
@@ -61,7 +75,7 @@ services:
       context: .
       dockerfile: frontend.Dockerfile
     ports:
-      - ${APP_BIND_HOST:-127.0.0.1}:${APP_PORT:-8000}:8080
+      - ${APP_BIND_HOST:-0.0.0.0}:${APP_PORT:-38000}:8080
     depends_on:
       api:
         condition: service_healthy

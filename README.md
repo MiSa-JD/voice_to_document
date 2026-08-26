@@ -31,9 +31,16 @@ make test-integration
 make test-e2e
 make test
 make compose-smoke
+make model-smoke
 ```
 
-`make model-eval`은 R4 이후 Linux NVIDIA GPU에서만 사용합니다. 로컬 fake 개발 흐름은 GPU, `HF_TOKEN`, LLM API 키를 요구하지 않습니다.
+`make model-smoke`는 Linux x86_64 NVIDIA 장비에서 CUDA와 고정된 Torch 2.8,
+WhisperX 3.8.6, pyannote import를 확인합니다. 이 명령은 실제 모델을 다운로드하거나
+녹음을 전사하지 않습니다. `make model-eval`은 R4-08에서 실제 평가가 연결된 뒤 사용합니다.
+
+기본 `make install`과 Compose는 speech extra를 설치하지 않으므로 GPU, `HF_TOKEN`, LLM API 키를
+요구하지 않습니다. 모델 image의 다운로드 cache는 애플리케이션 결과와 분리된
+`MODEL_CACHE_ROOT`에 영속화됩니다.
 
 ## 비밀값과 개인정보
 
@@ -43,7 +50,8 @@ make compose-smoke
 
 ## Compose 실행
 
-기본 개발 구성은 fake 모드이며 브라우저만 `127.0.0.1:8000`에 공개합니다.
+기본 서버 구성은 fake 모드이며 브라우저 서비스는 모든 인터페이스의 `38000` 포트에
+공개합니다. 같은 장비에서는 `http://127.0.0.1:38000`으로 접속합니다.
 
 ```sh
 cp .env.example .env
@@ -52,4 +60,44 @@ docker compose up --build -d --wait
 docker compose down
 ```
 
-`.env`의 `DATA_ROOT`, `APP_BIND_HOST`, `APP_PORT`로 호스트 경로와 공개 주소를 바꿀 수 있습니다. 컨테이너 내부의 입력·transcript·speaker·summary·app 경로도 `.env`에서 관리하지만, 서로 겹치지 않는 절대 경로여야 합니다.
+`.env`의 `DATA_ROOT`, `APP_BIND_HOST`, `APP_PORT`로 호스트 경로와 공개 주소를 바꿀 수 있습니다.
+Linux 호스트의 사용자 ID가 기본 `1000:1000`과 다르면 `APP_RUN_UID=$(id -u)`와
+`APP_RUN_GID=$(id -g)`에 해당하는 숫자로 바꿔 bind mount 쓰기 권한을 맞춥니다. 컨테이너
+내부의 입력·transcript·speaker·summary·app 경로도 `.env`에서 관리하지만, 서로 겹치지 않는
+절대 경로여야 합니다.
+
+입력 폴더와 transcript를 서로 다른 호스트 위치에 두려면 컨테이너 경로는 그대로 두고 다음
+호스트 경로만 설정합니다.
+
+```dotenv
+RECORDING_INPUT_HOST_DIR=/mnt/syncthing/recordings
+TRANSCRIPT_HOST_DIR=/mnt/storage/transcripts
+```
+
+두 변수를 비워 두면 각각 `${DATA_ROOT}/inbox`, `${DATA_ROOT}/transcripts`를 사용합니다. 호스트
+디렉터리는 Compose 실행 전에 만들고, transcript 디렉터리는 `APP_RUN_UID:APP_RUN_GID`가 쓸 수
+있어야 합니다. `RECORDING_INPUT_DIR=/data/inbox`와 `TRANSCRIPT_ROOT=/data/transcripts`는
+컨테이너 내부 경로이므로 일반적으로 변경하지 않습니다.
+
+## AI 모드
+
+speech와 document 공급자는 독립적으로 선택합니다. R4 실제 음성 모델과 기존 fake document를
+함께 사용할 때는 다음처럼 설정합니다.
+
+```dotenv
+SPEECH_MODE=real
+DOCUMENT_MODE=fake
+HF_TOKEN=your-private-token
+```
+
+`SPEECH_MODE=real`은 `HF_TOKEN`만 요구합니다. LLM 관련 변수는 `DOCUMENT_MODE=real`에서만
+필수입니다. 기존 `AI_MODE`는 직접 실행 호환용으로 읽지만 새 설정에서는 사용하지 않습니다.
+
+GPU runtime만 검증하려면 NVIDIA driver와 NVIDIA Container Toolkit을 준비한 뒤 실행합니다.
+
+```sh
+make model-smoke
+```
+
+성공 출력은 GPU/driver/CUDA와 패키지 버전만 포함하며 토큰이나 전체 환경 변수는 출력하지
+않습니다.

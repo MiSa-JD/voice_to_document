@@ -18,6 +18,12 @@ def run(settings: Settings | None = None, handler: JobHandler | None = None) -> 
     logger = configure_logging("worker", config.log_level)
     stop = threading.Event()
 
+    if config.uses_legacy_ai_mode:
+        logger.warning(
+            "legacy_ai_mode",
+            extra={"stage": "configuration", "replacement": "SPEECH_MODE,DOCUMENT_MODE"},
+        )
+
     def request_stop(signum: int, _frame: object) -> None:
         logger.info("worker_stop_requested", extra={"signal": signum})
         stop.set()
@@ -29,10 +35,10 @@ def run(settings: Settings | None = None, handler: JobHandler | None = None) -> 
     tracker = StabilityTracker(config.file_stable_seconds)
     if handler is not None:
         job_handler = handler
-    elif config.ai_mode == "fake":
+    elif config.effective_speech_mode == "fake" and config.effective_document_mode == "fake":
         job_handler = FakePipelineHandler(config, logger)
     else:
-        raise RuntimeError("real AI pipeline is not implemented before R4")
+        raise RuntimeError("real speech pipeline is not implemented before R4-03")
     logger.info("worker_started", extra={"stage": "readiness"})
     while not stop.is_set():
         discover_once(config, tracker, logger)

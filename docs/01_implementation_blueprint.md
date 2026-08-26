@@ -283,6 +283,8 @@ ${APP_DATA_DIR}/
 |---|---:|---|---|
 | `RECORDING_INPUT_DIR` | 예 | `/data/inbox` | Syncthing이 녹음을 넣는 폴더 |
 | `TRANSCRIPT_ROOT` | 예 | `/data/transcripts` | STT 결과 저장 루트 |
+| `RECORDING_INPUT_HOST_DIR` | 아니요 | `${DATA_ROOT}/inbox` | Compose가 입력 폴더에 연결할 호스트 경로 |
+| `TRANSCRIPT_HOST_DIR` | 아니요 | `${DATA_ROOT}/transcripts` | Compose가 transcript 폴더에 연결할 호스트 경로 |
 | `SPEAKER_ROOT` | 예 | `/data/speakers` | 화자 클립/프로필 저장 루트 |
 | `SUMMARY_ROOT` | 예 | `/data/documents` | 범주별 요약 저장 루트 |
 | `APP_DATA_DIR` | 예 | `/data/app` | SQLite와 격리 파일 저장 루트 |
@@ -301,8 +303,8 @@ ${APP_DATA_DIR}/
 | `LLM_BASE_URL` | 공급자별 | 로컬 또는 원격 URL | OpenAI 호환 API 주소 |
 | `LLM_API_KEY` | 공급자별 | 비공개 | API 키 |
 | `LLM_MODEL` | 예 | 공급자 모델명 | 분류/요약에 사용할 모델 |
-| `APP_BIND_HOST` | 아니요 | `127.0.0.1` | `web` 서비스를 호스트에 노출할 주소 |
-| `APP_PORT` | 아니요 | `8000` | 브라우저에서 접속할 `web` 포트 |
+| `APP_BIND_HOST` | 아니요 | `0.0.0.0` | 디스플레이 없는 서버에서 `web` 서비스를 노출할 주소 |
+| `APP_PORT` | 아니요 | `38000` | 브라우저에서 접속할 `web` 포트 |
 | `LOG_LEVEL` | 아니요 | `INFO` | 로그 수준 |
 
 경로, 범주 목록, 자동 요약 목록, 임계값은 시작할 때 한 번 검증한다. 범주 목록에 없는 자동 요약 범주가 있거나 경로가 서로 위험하게 중첩되면 시작을 실패시켜 잘못된 운영을 막는다.
@@ -720,7 +722,10 @@ FastAPI의 OpenAPI schema를 API 계약의 기준으로 삼는다. 프런트엔�
 
 개발 시 Vite dev server가 `/api`를 FastAPI로 proxy한다. API 주소를 컴포넌트 곳곳에 넣지 않고 하나의 fetch client에서 상대 경로로 호출한다.
 
-첫 버전은 인증 시스템을 만들지 않고 `127.0.0.1` 바인딩을 기본으로 한다. LAN 또는 인터넷에 노출하려면 구현 범위 밖의 리버스 프록시 인증과 TLS를 먼저 구성해야 한다. 오디오 파일 경로를 API 응답에 그대로 노출하지 않고 artifact ID로 조회한다.
+첫 버전은 디스플레이 없는 서버에서 접근할 수 있도록 `0.0.0.0:38000` 바인딩을 기본으로 한다.
+인증 시스템은 포함하지 않으므로 신뢰할 수 있는 LAN과 호스트 방화벽 안에서만 사용한다. 인터넷에
+노출하려면 구현 범위 밖의 리버스 프록시 인증과 TLS를 먼저 구성해야 한다. 오디오 파일 경로를 API
+응답에 그대로 노출하지 않고 artifact ID로 조회한다.
 
 ---
 

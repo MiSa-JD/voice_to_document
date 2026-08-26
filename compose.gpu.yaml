@@ -1,0 +1,23 @@
+services:
+  model-smoke:
+    profiles: ["model"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: model-runtime
+    command: ["python", "-m", "app.model_runtime"]
+    environment:
+      MODEL_CACHE_ROOT: /models
+      XDG_CACHE_HOME: /models/xdg
+      HF_HOME: /models/huggingface
+      TORCH_HOME: /models/torch
+    user: "${MODEL_RUN_UID:-1000}:${MODEL_RUN_GID:-1000}"
+    volumes:
+      - ${MODEL_CACHE_ROOT:-./runtime/model-cache}:/models
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

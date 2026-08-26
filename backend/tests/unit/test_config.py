@@ -11,7 +11,8 @@ from pydantic import ValidationError
 def test_valid_fake_settings(settings_values: dict[str, Any]) -> None:
     settings = Settings(**settings_values)
 
-    assert settings.ai_mode == "fake"
+    assert settings.effective_speech_mode == "fake"
+    assert settings.effective_document_mode == "fake"
     assert settings.categories == ("강의", "일상 대화", "회의", "게임 목록", "기타")
     assert settings.database_path == Path(settings_values["APP_DATA_DIR"]) / "app.db"
     assert "hf_token" not in settings.public_summary()
@@ -56,22 +57,56 @@ def test_rejects_unknown_auto_summary_category(settings_values: dict[str, Any]) 
         Settings(**settings_values)
 
 
-def test_real_mode_requires_secret_variable_names(settings_values: dict[str, Any]) -> None:
-    settings_values["AI_MODE"] = "real"
+def test_real_speech_only_requires_hf_token(settings_values: dict[str, Any]) -> None:
+    settings_values["SPEECH_MODE"] = "real"
+
+    with pytest.raises(ValidationError, match="HF_TOKEN"):
+        Settings(**settings_values)
+
+    settings_values["HF_TOKEN"] = "hf_private_test_value"
+    settings = Settings(**settings_values)
+
+    assert settings.effective_speech_mode == "real"
+    assert settings.effective_document_mode == "fake"
+
+
+def test_real_document_requires_llm_variable_names(settings_values: dict[str, Any]) -> None:
+    settings_values["DOCUMENT_MODE"] = "real"
 
     with pytest.raises(ValidationError) as error:
         Settings(**settings_values)
 
     message = str(error.value)
-    assert "HF_TOKEN" in message
     assert "LLM_API_KEY" in message
     assert "LLM_MODEL" in message
+
+
+def test_legacy_ai_mode_remains_compatible(settings_values: dict[str, Any]) -> None:
+    settings_values.pop("SPEECH_MODE")
+    settings_values.pop("DOCUMENT_MODE")
+    settings_values.update(
+        {
+            "AI_MODE": "real",
+            "HF_TOKEN": "hf_private_test_value",
+            "LLM_PROVIDER": "openai_compatible",
+            "LLM_BASE_URL": "https://example.invalid/v1",
+            "LLM_API_KEY": "sk-private-test-value",
+            "LLM_MODEL": "test-model",
+        }
+    )
+
+    settings = Settings(**settings_values)
+
+    assert settings.uses_legacy_ai_mode
+    assert settings.effective_speech_mode == "real"
+    assert settings.effective_document_mode == "real"
 
 
 def test_secret_values_are_masked(settings_values: dict[str, Any]) -> None:
     settings_values.update(
         {
-            "AI_MODE": "real",
+            "SPEECH_MODE": "real",
+            "DOCUMENT_MODE": "real",
             "HF_TOKEN": "hf_private_test_value",
             "LLM_PROVIDER": "openai_compatible",
             "LLM_BASE_URL": "https://example.invalid/v1",
