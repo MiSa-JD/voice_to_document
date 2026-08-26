@@ -3,14 +3,14 @@ NPM := npm --prefix frontend
 UV_PROJECT_ENVIRONMENT := $(CURDIR)/.venv
 export UV_PROJECT_ENVIRONMENT
 
-.PHONY: install runtime-dirs check-format lint typecheck api-schema api-schema-check test-unit test-frontend test-integration test-e2e test compose-smoke model-eval
+.PHONY: install runtime-dirs check-format lint typecheck api-schema api-schema-check test-unit test-frontend test-integration test-e2e test compose-smoke model-smoke model-eval
 
 install:
 	$(UV) sync --frozen
 	$(NPM) ci
 
 runtime-dirs:
-	mkdir -p runtime/inbox runtime/transcripts runtime/speakers runtime/documents runtime/app
+	mkdir -p runtime/inbox runtime/transcripts runtime/speakers runtime/documents runtime/app runtime/model-cache
 
 check-format:
 	$(UV) run ruff format --check backend
@@ -48,6 +48,19 @@ test: test-unit test-frontend test-integration
 
 compose-smoke:
 	./scripts/compose-smoke.sh
+
+model-smoke: runtime-dirs
+	@set -eu; \
+	model_project="voice-to-document-model-smoke-$$$$"; \
+	model_uid="$$(id -u)"; \
+	model_gid="$$(id -g)"; \
+	cleanup() { \
+		COMPOSE_PROJECT_NAME="$$model_project" MODEL_RUN_UID="$$model_uid" MODEL_RUN_GID="$$model_gid" \
+			docker compose -f compose.yaml -f compose.gpu.yaml down --remove-orphans >/dev/null 2>&1 || true; \
+	}; \
+	trap cleanup EXIT HUP INT TERM; \
+	COMPOSE_PROJECT_NAME="$$model_project" MODEL_RUN_UID="$$model_uid" MODEL_RUN_GID="$$model_gid" \
+		docker compose -f compose.yaml -f compose.gpu.yaml --profile model run --build --rm model-smoke
 
 model-eval:
 	@echo "R4에서 Linux NVIDIA GPU와 실제 모델 환경을 준비한 뒤 사용할 수 있습니다." >&2

@@ -3,6 +3,7 @@ set -eu
 
 smoke_parent=${TMPDIR:-/tmp}
 smoke_data_root=$(mktemp -d "$smoke_parent/voice-to-document-smoke.XXXXXX")
+export COMPOSE_PROJECT_NAME="voice-to-document-smoke-$$"
 
 cleanup() {
   DATA_ROOT="$smoke_data_root" docker compose down --remove-orphans >/dev/null 2>&1 || true
@@ -23,11 +24,21 @@ export DATA_ROOT="$smoke_data_root"
 export E2E_DATA_ROOT="$smoke_data_root"
 export SCAN_INTERVAL_SECONDS=1
 export FILE_STABLE_SECONDS=1
+export SPEECH_MODE=fake
+export DOCUMENT_MODE=fake
+export APP_RUN_UID
+APP_RUN_UID=$(id -u)
+export APP_RUN_GID
+APP_RUN_GID=$(id -g)
+export APP_BIND_HOST=127.0.0.1
+export APP_PORT
+APP_PORT=$(python3 -c 'import socket; sock = socket.socket(); sock.bind(("127.0.0.1", 0)); print(sock.getsockname()[1]); sock.close()')
+export E2E_BASE_URL="http://127.0.0.1:$APP_PORT"
 
 docker compose config --quiet
 docker compose up --build --wait
 host_attempt=0
-until curl --fail --silent --show-error http://127.0.0.1:8000/health/live >/dev/null; do
+until curl --fail --silent --show-error "$E2E_BASE_URL/health/live" >/dev/null; do
   host_attempt=$((host_attempt + 1))
   if [ "$host_attempt" -ge 30 ]; then
     echo "host web endpoint did not become ready" >&2
