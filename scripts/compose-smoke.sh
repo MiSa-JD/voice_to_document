@@ -22,6 +22,13 @@ mkdir -p \
 
 export DATA_ROOT="$smoke_data_root"
 export E2E_DATA_ROOT="$smoke_data_root"
+export RECORDING_INPUT_HOST_DIR="$smoke_data_root/inbox"
+export TRANSCRIPT_HOST_DIR="$smoke_data_root/transcripts"
+export RECORDING_INPUT_DIR=/data/inbox
+export TRANSCRIPT_ROOT=/data/transcripts
+export SPEAKER_ROOT=/data/speakers
+export SUMMARY_ROOT=/data/documents
+export APP_DATA_DIR=/data/app
 export SCAN_INTERVAL_SECONDS=1
 export FILE_STABLE_SECONDS=1
 export SPEECH_MODE=fake

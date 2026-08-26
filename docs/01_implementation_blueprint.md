@@ -283,6 +283,8 @@ ${APP_DATA_DIR}/
 |---|---:|---|---|
 | `RECORDING_INPUT_DIR` | 예 | `/data/inbox` | Syncthing이 녹음을 넣는 폴더 |
 | `TRANSCRIPT_ROOT` | 예 | `/data/transcripts` | STT 결과 저장 루트 |
+| `RECORDING_INPUT_HOST_DIR` | 아니요 | `${DATA_ROOT}/inbox` | Compose가 입력 폴더에 연결할 호스트 경로 |
+| `TRANSCRIPT_HOST_DIR` | 아니요 | `${DATA_ROOT}/transcripts` | Compose가 transcript 폴더에 연결할 호스트 경로 |
 | `SPEAKER_ROOT` | 예 | `/data/speakers` | 화자 클립/프로필 저장 루트 |
 | `SUMMARY_ROOT` | 예 | `/data/documents` | 범주별 요약 저장 루트 |
 | `APP_DATA_DIR` | 예 | `/data/app` | SQLite와 격리 파일 저장 루트 |
