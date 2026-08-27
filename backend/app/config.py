@@ -163,9 +163,12 @@ class Settings(BaseSettings):
                 + ", ".join(sorted(unknown))
             )
 
-        if self.effective_speech_mode == "real" and not _has_value(self.hf_token):
+        uses_real_speech_runtime = (
+            self.service_name == "worker" and self.effective_speech_mode == "real"
+        )
+        if uses_real_speech_runtime and not _has_value(self.hf_token):
             raise ValueError("real SPEECH_MODE requires: HF_TOKEN")
-        if self.effective_speech_mode == "real":
+        if uses_real_speech_runtime:
             if not self.model_cache_root.is_absolute():
                 raise ValueError("MODEL_CACHE_ROOT must be an absolute path")
             try:
