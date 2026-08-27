@@ -50,10 +50,14 @@ class FakeAdapters:
         )
 
     def classify(self, content_sha256: str) -> Classification:
+        value = self.classification_response(content_sha256)
+        return Classification.model_validate(value)
+
+    def classification_response(self, content_sha256: str) -> object:
         value = self._expected(content_sha256).get("classification")
         if value is None:
             raise ValueError("fake document fixture has no classification")
-        return Classification.model_validate(value)
+        return value
 
     def summarize(self, content_sha256: str) -> MeetingSummary:
         value = self._expected(content_sha256).get("summary")

@@ -86,7 +86,7 @@ def test_unknown_recording_status_is_rejected() -> None:
 
 
 def test_classification_rejects_category_outside_settings() -> None:
-    result = Classification(category="비밀 범주", confidence=0.9, reason="테스트")
+    result = Classification(schema_version=1, category="비밀 범주", confidence=0.9, reason="테스트")
 
     with pytest.raises(ValueError, match="not allowed"):
         result.ensure_allowed(("회의", "기타"))
