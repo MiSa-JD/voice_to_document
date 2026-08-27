@@ -16,6 +16,9 @@ def test_valid_fake_settings(settings_values: dict[str, Any]) -> None:
     assert settings.effective_document_mode == "fake"
     assert settings.categories == ("강의", "일상 대화", "회의", "게임 목록", "기타")
     assert settings.database_path == Path(settings_values["APP_DATA_DIR"]) / "app.db"
+    assert settings.document_root == Path(settings_values["SUMMARY_ROOT"])
+    assert settings.category_definitions[1].display_name == "일상 대화"
+    assert settings.category_definitions[1].slug == "일상-대화"
     assert settings.whisper_batch_size == 4
     assert settings.whisper_language is None
     assert "hf_token" not in settings.public_summary()
@@ -48,7 +51,7 @@ def test_rejects_overlapping_roots(settings_values: dict[str, Any]) -> None:
     nested.mkdir()
     settings_values["SUMMARY_ROOT"] = nested
 
-    with pytest.raises(ValidationError, match="SUMMARY_ROOT and APP_DATA_DIR must not overlap"):
+    with pytest.raises(ValidationError, match="DOCUMENT_ROOT and APP_DATA_DIR must not overlap"):
         Settings(**settings_values)
 
 
@@ -58,6 +61,45 @@ def test_rejects_unknown_auto_summary_category(settings_values: dict[str, Any]) 
 
     with pytest.raises(ValidationError, match="AUTO_SUMMARY_CATEGORIES"):
         Settings(**settings_values)
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("CATEGORIES", "회의,,기타"),
+        ("CATEGORIES", "회의,회의"),
+        ("AUTO_SUMMARY_CATEGORIES", "회의,"),
+        ("AUTO_SUMMARY_CATEGORIES", "회의,회의"),
+    ],
+)
+def test_rejects_empty_or_duplicate_category_values(
+    settings_values: dict[str, Any], name: str, value: str
+) -> None:
+    settings_values[name] = value
+
+    with pytest.raises(ValidationError, match=f"{name} must not contain"):
+        Settings(**settings_values)
+
+
+def test_rejects_category_slug_collision(settings_values: dict[str, Any]) -> None:
+    settings_values["CATEGORIES"] = "Team Meeting,team-meeting"
+    settings_values["AUTO_SUMMARY_CATEGORIES"] = "Team Meeting"
+
+    with pytest.raises(ValidationError, match="colliding slugs"):
+        Settings(**settings_values)
+
+
+def test_document_root_takes_precedence_over_legacy_summary_root(
+    settings_values: dict[str, Any], tmp_path: Path
+) -> None:
+    document_root = tmp_path / "markdown"
+    document_root.mkdir()
+    settings_values["DOCUMENT_ROOT"] = document_root
+
+    settings = Settings(**settings_values)
+
+    assert settings.document_root == document_root
+    assert settings.summary_root == document_root
 
 
 def test_real_speech_only_requires_hf_token(settings_values: dict[str, Any]) -> None:

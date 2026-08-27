@@ -7,6 +7,8 @@ from typing import Literal, Self
 from pydantic import AliasChoices, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from app.categories import CategoryDefinition, category_definitions, parse_categories
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -19,7 +21,7 @@ class Settings(BaseSettings):
     recording_input_dir: Path = Field(validation_alias="RECORDING_INPUT_DIR")
     transcript_root: Path = Field(validation_alias="TRANSCRIPT_ROOT")
     speaker_root: Path = Field(validation_alias="SPEAKER_ROOT")
-    summary_root: Path = Field(validation_alias="SUMMARY_ROOT")
+    document_root: Path = Field(validation_alias=AliasChoices("DOCUMENT_ROOT", "SUMMARY_ROOT"))
     app_data_dir: Path = Field(validation_alias="APP_DATA_DIR")
 
     scan_interval_seconds: float = Field(default=10, gt=0, validation_alias="SCAN_INTERVAL_SECONDS")
@@ -71,11 +73,23 @@ class Settings(BaseSettings):
 
     @property
     def categories(self) -> tuple[str, ...]:
-        return _csv_values(self.categories_csv)
+        return parse_categories(self.categories_csv)
+
+    @property
+    def category_definitions(self) -> tuple[CategoryDefinition, ...]:
+        return category_definitions(self.categories)
 
     @property
     def auto_summary_categories(self) -> tuple[str, ...]:
-        return _csv_values(self.auto_summary_categories_csv)
+        return parse_categories(
+            self.auto_summary_categories_csv,
+            setting_name="AUTO_SUMMARY_CATEGORIES",
+        )
+
+    @property
+    def summary_root(self) -> Path:
+        """Compatibility alias while summary and transcript documents share a root."""
+        return self.document_root
 
     @property
     def database_path(self) -> Path:
@@ -106,7 +120,7 @@ class Settings(BaseSettings):
             "RECORDING_INPUT_DIR": self.recording_input_dir,
             "TRANSCRIPT_ROOT": self.transcript_root,
             "SPEAKER_ROOT": self.speaker_root,
-            "SUMMARY_ROOT": self.summary_root,
+            "DOCUMENT_ROOT": self.document_root,
             "APP_DATA_DIR": self.app_data_dir,
         }
         resolved: dict[str, Path] = {}
@@ -125,7 +139,7 @@ class Settings(BaseSettings):
 
         writable_names = {"APP_DATA_DIR"}
         if self.service_name == "worker":
-            writable_names.update({"TRANSCRIPT_ROOT", "SPEAKER_ROOT", "SUMMARY_ROOT"})
+            writable_names.update({"TRANSCRIPT_ROOT", "SPEAKER_ROOT", "DOCUMENT_ROOT"})
         for name in writable_names:
             if not os.access(resolved[name], os.W_OK):
                 raise ValueError(f"{name} is not writable for {self.service_name}")
@@ -136,8 +150,7 @@ class Settings(BaseSettings):
                 if left == right or left in right.parents or right in left.parents:
                     raise ValueError(f"{left_name} and {right_name} must not overlap")
 
-        if not self.categories:
-            raise ValueError("CATEGORIES must contain at least one category")
+        category_definitions(self.categories)
         unknown = set(self.auto_summary_categories) - set(self.categories)
         if unknown:
             raise ValueError(
@@ -185,13 +198,10 @@ class Settings(BaseSettings):
             "whisper_model": self.whisper_model,
             "whisper_batch_size": self.whisper_batch_size,
             "categories": self.categories,
+            "category_slugs": {item.display_name: item.slug for item in self.category_definitions},
             "auto_summary_categories": self.auto_summary_categories,
             "log_level": self.log_level,
         }
-
-
-def _csv_values(value: str) -> tuple[str, ...]:
-    return tuple(dict.fromkeys(part.strip() for part in value.split(",") if part.strip()))
 
 
 def _has_value(value: object) -> bool:

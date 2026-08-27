@@ -8,6 +8,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from app.categories import category_slug
 from app.db import connect, migrate_database, utc_now
 
 
@@ -99,12 +100,4 @@ def write_artifact(
 
 
 def safe_category_slug(category: str) -> str:
-    if any(character in category for character in ("/", "\\", "\0")) or ".." in category:
-        raise ValueError("category cannot be used as a path")
-    slug = "-".join(
-        "".join(character.lower() for character in word if character.isalnum())
-        for word in category.split()
-    )
-    if not slug:
-        raise ValueError("category slug is empty")
-    return slug
+    return category_slug(category)

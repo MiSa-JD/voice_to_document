@@ -2,7 +2,7 @@ x-backend-environment: &backend-environment
   RECORDING_INPUT_DIR: ${RECORDING_INPUT_DIR:-/data/inbox}
   TRANSCRIPT_ROOT: ${TRANSCRIPT_ROOT:-/data/transcripts}
   SPEAKER_ROOT: ${SPEAKER_ROOT:-/data/speakers}
-  SUMMARY_ROOT: ${SUMMARY_ROOT:-/data/documents}
+  DOCUMENT_ROOT: ${DOCUMENT_ROOT:-${SUMMARY_ROOT:-/data/documents}}
   APP_DATA_DIR: ${APP_DATA_DIR:-/data/app}
   SCAN_INTERVAL_SECONDS: ${SCAN_INTERVAL_SECONDS:-10}
   FILE_STABLE_SECONDS: ${FILE_STABLE_SECONDS:-30}
@@ -27,7 +27,7 @@ x-backend-volumes: &backend-read-volumes
   - ${RECORDING_INPUT_HOST_DIR:-${DATA_ROOT:-./runtime}/inbox}:${RECORDING_INPUT_DIR:-/data/inbox}:ro
   - ${TRANSCRIPT_HOST_DIR:-${DATA_ROOT:-./runtime}/transcripts}:${TRANSCRIPT_ROOT:-/data/transcripts}:ro
   - ${DATA_ROOT:-./runtime}/speakers:${SPEAKER_ROOT:-/data/speakers}:ro
-  - ${DATA_ROOT:-./runtime}/documents:${SUMMARY_ROOT:-/data/documents}:ro
+  - ${DATA_ROOT:-./runtime}/documents:${DOCUMENT_ROOT:-${SUMMARY_ROOT:-/data/documents}}:ro
   - ${DATA_ROOT:-./runtime}/app:${APP_DATA_DIR:-/data/app}
 
 services:
@@ -64,7 +64,7 @@ services:
       - ${RECORDING_INPUT_HOST_DIR:-${DATA_ROOT:-./runtime}/inbox}:${RECORDING_INPUT_DIR:-/data/inbox}:ro
       - ${TRANSCRIPT_HOST_DIR:-${DATA_ROOT:-./runtime}/transcripts}:${TRANSCRIPT_ROOT:-/data/transcripts}
       - ${DATA_ROOT:-./runtime}/speakers:${SPEAKER_ROOT:-/data/speakers}
-      - ${DATA_ROOT:-./runtime}/documents:${SUMMARY_ROOT:-/data/documents}
+      - ${DATA_ROOT:-./runtime}/documents:${DOCUMENT_ROOT:-${SUMMARY_ROOT:-/data/documents}}
       - ${DATA_ROOT:-./runtime}/app:${APP_DATA_DIR:-/data/app}
     depends_on:
       api:
