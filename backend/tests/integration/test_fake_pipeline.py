@@ -12,7 +12,7 @@ from app.pipeline import FakePipelineHandler
 from app.runtime import process_one_job
 
 
-def test_complete_fixture_reaches_completed_with_single_artifacts(
+def test_complete_fixture_reaches_completed_with_revision_matched_artifacts(
     tmp_path: Path,
     settings_values: dict[str, Any],
 ) -> None:
@@ -30,26 +30,36 @@ def test_complete_fixture_reaches_completed_with_single_artifacts(
             "SELECT status, category FROM recordings WHERE id = ?", (result.recording_id,)
         ).fetchone()
         jobs = connection.execute("SELECT kind, status FROM jobs ORDER BY created_at").fetchall()
-        artifacts = connection.execute("SELECT kind FROM artifacts ORDER BY kind").fetchall()
+        artifacts = connection.execute(
+            "SELECT kind, relative_path, schema_version, revision FROM artifacts ORDER BY kind"
+        ).fetchall()
     assert dict(recording) == {"status": "COMPLETED", "category": "회의"}
     assert [dict(job) for job in jobs] == [
         {"kind": "transcribe", "status": "succeeded"},
         {"kind": "classify", "status": "succeeded"},
-        {"kind": "summarize", "status": "succeeded"},
     ]
     assert [row["kind"] for row in artifacts] == [
-        "summary_json",
-        "summary_markdown",
         "transcript_json",
         "transcript_markdown",
     ]
+    assert {row["revision"] for row in artifacts} == {1}
+    assert {row["schema_version"] for row in artifacts} == {1, 2}
+    json_artifact = next(row for row in artifacts if row["kind"] == "transcript_json")
+    markdown_artifact = next(row for row in artifacts if row["kind"] == "transcript_markdown")
+    transcript_json = settings.transcript_root / json_artifact["relative_path"]
+    transcript_markdown = settings.document_root / markdown_artifact["relative_path"]
+    json_text = transcript_json.read_text()
+    assert '"classification"' in json_text
+    assert '"classification_fingerprint"' in json_text
+    assert "Revision: 1" in transcript_markdown.read_text()
+    assert "SPEAKER_00" in transcript_markdown.read_text()
 
     assert not process_one_job(settings.database_path, handler, logging.getLogger("test"))
     with connect(settings.database_path) as connection:
-        assert connection.execute("SELECT COUNT(*) FROM artifacts").fetchone()[0] == 4
+        assert connection.execute("SELECT COUNT(*) FROM artifacts").fetchone()[0] == 2
 
 
-def test_review_fixture_stops_before_classification(
+def test_review_fixture_keeps_flag_but_generates_temporary_speaker_markdown(
     tmp_path: Path,
     settings_values: dict[str, Any],
 ) -> None:
@@ -59,13 +69,108 @@ def test_review_fixture_stops_before_classification(
     result = ingest_file(settings.database_path, source)
     handler = FakePipelineHandler(settings, logging.getLogger("test"))
 
-    assert process_one_job(settings.database_path, handler, logging.getLogger("test"))
+    while process_one_job(settings.database_path, handler, logging.getLogger("test")):
+        pass
 
     with connect(settings.database_path) as connection:
         recording = connection.execute(
             "SELECT status, needs_speaker_review FROM recordings WHERE id = ?",
             (result.recording_id,),
         ).fetchone()
-        jobs = connection.execute("SELECT kind FROM jobs").fetchall()
-    assert dict(recording) == {"status": "SPEAKER_REVIEW", "needs_speaker_review": 1}
-    assert [row["kind"] for row in jobs] == ["transcribe"]
+        jobs = connection.execute("SELECT kind, status FROM jobs ORDER BY created_at").fetchall()
+        artifact = connection.execute(
+            "SELECT relative_path FROM artifacts WHERE kind = 'transcript_markdown'"
+        ).fetchone()
+    assert dict(recording) == {"status": "COMPLETED", "needs_speaker_review": 1}
+    assert [dict(row) for row in jobs] == [
+        {"kind": "transcribe", "status": "succeeded"},
+        {"kind": "classify", "status": "succeeded"},
+    ]
+    markdown = (settings.document_root / artifact["relative_path"]).read_text()
+    assert "SPEAKER_00" in markdown
+    assert "SPEAKER_01" in markdown
+
+
+def test_renderer_failure_preserves_json_without_markdown_registration(
+    settings_values: dict[str, Any],
+) -> None:
+    settings = Settings(**settings_values)
+    source = settings.recording_input_dir / "complete.m4a"
+    shutil.copyfile(Path(__file__).parents[1] / "fixtures" / "complete.m4a", source)
+    result = ingest_file(settings.database_path, source)
+
+    def fail_renderer(_transcript: object) -> bytes:
+        raise RuntimeError("injected renderer failure")
+
+    handler = FakePipelineHandler(
+        settings,
+        logging.getLogger("test"),
+        markdown_renderer=fail_renderer,
+    )
+    while process_one_job(settings.database_path, handler, logging.getLogger("test")):
+        pass
+
+    with connect(settings.database_path) as connection:
+        recording = connection.execute(
+            "SELECT status, last_error_code FROM recordings WHERE id = ?", (result.recording_id,)
+        ).fetchone()
+        artifacts = connection.execute(
+            "SELECT kind, relative_path FROM artifacts WHERE recording_id = ?",
+            (result.recording_id,),
+        ).fetchall()
+    assert dict(recording) == {
+        "status": "FAILED",
+        "last_error_code": "TRANSCRIPT_RENDER_ERROR",
+    }
+    assert [row["kind"] for row in artifacts] == ["transcript_json"]
+    assert not list(settings.document_root.rglob("*.md"))
+    payload = (settings.transcript_root / artifacts[0]["relative_path"]).read_text(encoding="utf-8")
+    assert '"classification"' in payload
+
+
+def test_duplicate_input_and_handler_restart_keep_one_artifact_per_kind(
+    settings_values: dict[str, Any],
+) -> None:
+    settings = Settings(**settings_values)
+    source = settings.recording_input_dir / "first.m4a"
+    duplicate = settings.recording_input_dir / "duplicate.m4a"
+    fixture = Path(__file__).parents[1] / "fixtures" / "complete.m4a"
+    shutil.copyfile(fixture, source)
+    registration = ingest_file(settings.database_path, source)
+    first_handler = FakePipelineHandler(settings, logging.getLogger("test"))
+    while process_one_job(settings.database_path, first_handler, logging.getLogger("test")):
+        pass
+
+    shutil.copyfile(fixture, duplicate)
+    duplicate_registration = ingest_file(settings.database_path, duplicate)
+    restarted_handler = FakePipelineHandler(settings, logging.getLogger("test"))
+    assert not process_one_job(settings.database_path, restarted_handler, logging.getLogger("test"))
+
+    assert duplicate_registration.recording_id == registration.recording_id
+    assert duplicate_registration.created is False
+    with connect(settings.database_path) as connection:
+        rows = connection.execute(
+            """
+            SELECT kind, revision, COUNT(*) AS count FROM artifacts
+            GROUP BY kind, revision ORDER BY kind
+            """
+        ).fetchall()
+    assert [dict(row) for row in rows] == [
+        {"kind": "transcript_json", "revision": 1, "count": 1},
+        {"kind": "transcript_markdown", "revision": 1, "count": 1},
+    ]
+
+
+def test_unknown_private_hash_uses_local_fallback_without_external_provider(
+    settings_values: dict[str, Any],
+) -> None:
+    settings = Settings(**settings_values)
+    handler = FakePipelineHandler(settings, logging.getLogger("test"))
+    response = handler._fake_classification_response("f" * 64)
+
+    assert response == {
+        "schema_version": 1,
+        "category": settings.categories[-1],
+        "confidence": 0.0,
+        "reason": "local deterministic fallback",
+    }

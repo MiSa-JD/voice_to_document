@@ -28,6 +28,7 @@ from app.pipeline import FakePipelineHandler
 from app.runtime import PermanentJobError, RetryableJobError
 from app.schema import RecordingStatus, Segment, SpeechModelFingerprints, Transcript
 from app.speech_failures import speech_failure_policy
+from app.state import transition_recording
 from app.transcription import (
     TranscriptionResult,
     TranscriptionSegment,
@@ -77,6 +78,7 @@ class RealSpeechPipelineHandler(FakePipelineHandler):
         transcription_adapter: TranscriptionAdapter | None = None,
         alignment_adapter: AlignmentAdapter | None = None,
         diarization_adapter: DiarizationAdapter | None = None,
+        continue_to_documents: bool = True,
     ) -> None:
         # Fake document adapters remain available after R5 speaker review is implemented.
         super().__init__(settings, logger)
@@ -104,6 +106,7 @@ class RealSpeechPipelineHandler(FakePipelineHandler):
             ),
             hf_token=settings.hf_token,
         )
+        self.continue_to_documents = continue_to_documents
 
     def __call__(self, job: Job) -> None:
         if job.kind != "transcribe":
@@ -158,6 +161,14 @@ class RealSpeechPipelineHandler(FakePipelineHandler):
         self._replace_segments(transcript)
         self._write_transcript_json(transcript)
         self._set_review_required(job.recording_id)
+        if self.continue_to_documents:
+            self._enqueue_classification(transcript)
+        else:
+            transition_recording(
+                self.settings.database_path,
+                job.recording_id,
+                RecordingStatus.SPEAKER_REVIEW,
+            )
 
     def _validated_source(self, value: str) -> Path:
         try:

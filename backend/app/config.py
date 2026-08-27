@@ -34,6 +34,11 @@ class Settings(BaseSettings):
         default="강의,회의",
         validation_alias="AUTO_SUMMARY_CATEGORIES",
     )
+    classification_context_max_chars: int = Field(
+        default=120_000,
+        gt=0,
+        validation_alias="CLASSIFICATION_CONTEXT_MAX_CHARS",
+    )
 
     ai_mode: Literal["fake", "real"] | None = Field(
         default=None,
@@ -200,6 +205,7 @@ class Settings(BaseSettings):
             "categories": self.categories,
             "category_slugs": {item.display_name: item.slug for item in self.category_definitions},
             "auto_summary_categories": self.auto_summary_categories,
+            "classification_context_max_chars": self.classification_context_max_chars,
             "log_level": self.log_level,
         }
 

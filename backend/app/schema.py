@@ -98,6 +98,7 @@ class Transcript(BaseModel):
     segments: list[Segment] = Field(min_length=1)
     model_fingerprints: SpeechModelFingerprints | None = None
     classification: Classification | None = None
+    classification_fingerprint: dict[str, object] | None = None
 
     @field_validator("content_sha256")
     @classmethod

@@ -27,8 +27,15 @@ class MarkdownTurn:
 def with_classification(
     transcript: Transcript,
     classification: Classification,
+    fingerprint: dict[str, object] | None = None,
 ) -> Transcript:
-    return transcript.model_copy(update={"classification": classification}, deep=True)
+    return transcript.model_copy(
+        update={
+            "classification": classification,
+            "classification_fingerprint": fingerprint,
+        },
+        deep=True,
+    )
 
 
 def render_transcript_json(transcript: Transcript) -> bytes:

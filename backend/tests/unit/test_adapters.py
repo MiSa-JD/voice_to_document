@@ -32,13 +32,12 @@ def test_fake_adapters_are_deterministic_without_network(
     assert adapters.summarize(COMPLETE_HASH).action_items[0].task == "초안 준비"
 
 
-def test_review_fixture_stops_before_document_steps() -> None:
+def test_review_fixture_includes_local_document_classification() -> None:
     adapters = FakeAdapters()
     transcript = adapters.transcribe(str(uuid.uuid4()), REVIEW_HASH, 1)
 
     assert transcript.needs_speaker_review is True
-    with pytest.raises(ValueError, match="no classification"):
-        adapters.classify(REVIEW_HASH)
+    assert adapters.classify(REVIEW_HASH).category == "기타"
     with pytest.raises(ValueError, match="no summary"):
         adapters.summarize(REVIEW_HASH)
 

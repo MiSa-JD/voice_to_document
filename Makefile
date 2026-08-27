@@ -3,7 +3,7 @@ NPM := npm --prefix frontend
 UV_PROJECT_ENVIRONMENT := $(CURDIR)/.venv
 export UV_PROJECT_ENVIRONMENT
 
-.PHONY: install runtime-dirs check-format lint typecheck api-schema api-schema-check test-unit test-frontend test-integration test-e2e test compose-smoke model-smoke transcription-smoke alignment-smoke diarization-smoke model-eval
+.PHONY: install runtime-dirs check-format lint typecheck api-schema api-schema-check test-unit test-frontend test-integration test-stt-markdown-e2e test-e2e test compose-smoke model-smoke transcription-smoke alignment-smoke diarization-smoke model-eval
 
 install:
 	$(UV) sync --frozen
@@ -41,6 +41,9 @@ test-frontend:
 
 test-integration:
 	$(UV) run pytest backend/tests/integration
+
+test-stt-markdown-e2e:
+	$(UV) run pytest backend/tests/integration/test_stt_markdown_e2e.py
 
 test-e2e:
 	$(NPM) run test:e2e

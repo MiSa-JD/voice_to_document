@@ -28,6 +28,7 @@ export RECORDING_INPUT_DIR=/data/inbox
 export TRANSCRIPT_ROOT=/data/transcripts
 export SPEAKER_ROOT=/data/speakers
 export SUMMARY_ROOT=/data/documents
+export DOCUMENT_ROOT=/data/documents
 export APP_DATA_DIR=/data/app
 export SCAN_INTERVAL_SECONDS=1
 export FILE_STABLE_SECONDS=1

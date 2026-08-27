@@ -43,8 +43,6 @@ test('pipeline flow: fixture가 대시보드와 상세 결과에 표시된다', 
     page.getByText('다음 주까지 초안을 준비하겠습니다.'),
   ).toBeVisible();
   await expect(page.getByText('범주: 회의')).toBeVisible();
-  await expect(page.getByText('초안 준비 계획 확인')).toBeVisible();
-  await expect(page.getByText('초안 준비', { exact: true })).toBeVisible();
 });
 
 test('restart preservation: worker 재시작 뒤 결과가 유지된다', async ({
@@ -63,14 +61,14 @@ test('restart preservation: worker 재시작 뒤 결과가 유지된다', async 
   await expect(
     page.getByRole('heading', { name: 'e2e-complete.m4a' }),
   ).toBeVisible();
-  await expect(page.getByText('초안 준비 계획 확인')).toBeVisible();
+  await expect(page.getByText('범주: 회의')).toBeVisible();
 
   const detail = await request.get(`/api/recordings/${body.items[0]!.id}`);
   const payload = (await detail.json()) as {
     artifacts: unknown[];
     jobs: Array<{ status: string }>;
   };
-  expect(payload.artifacts).toHaveLength(4);
-  expect(payload.jobs).toHaveLength(3);
+  expect(payload.artifacts).toHaveLength(2);
+  expect(payload.jobs).toHaveLength(2);
   expect(payload.jobs.every((job) => job.status === 'succeeded')).toBe(true);
 });
