@@ -76,6 +76,18 @@ class SpeechModelFingerprints(BaseModel):
     diarization: dict[str, object] = Field(min_length=1)
 
 
+class Classification(BaseModel):
+    schema_version: Literal[1]
+    category: NonEmptyText
+    confidence: float = Field(ge=0, le=1)
+    reason: NonEmptyText
+
+    def ensure_allowed(self, categories: tuple[str, ...]) -> Classification:
+        if self.category not in categories:
+            raise ValueError(f"category is not allowed: {self.category}")
+        return self
+
+
 class Transcript(BaseModel):
     schema_version: Literal[2] = SCHEMA_VERSION
     recording_id: UUID
@@ -85,6 +97,7 @@ class Transcript(BaseModel):
     needs_speaker_review: bool
     segments: list[Segment] = Field(min_length=1)
     model_fingerprints: SpeechModelFingerprints | None = None
+    classification: Classification | None = None
 
     @field_validator("content_sha256")
     @classmethod
@@ -98,18 +111,6 @@ class Transcript(BaseModel):
         ordered = sorted(self.segments, key=lambda segment: (segment.start_ms, segment.end_ms))
         if self.segments != ordered:
             raise ValueError("segments must be ordered by start_ms and end_ms")
-        return self
-
-
-class Classification(BaseModel):
-    schema_version: Literal[1]
-    category: NonEmptyText
-    confidence: float = Field(ge=0, le=1)
-    reason: NonEmptyText
-
-    def ensure_allowed(self, categories: tuple[str, ...]) -> Classification:
-        if self.category not in categories:
-            raise ValueError(f"category is not allowed: {self.category}")
         return self
 
 

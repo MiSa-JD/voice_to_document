@@ -56,6 +56,11 @@ def write_artifact(
             before_replace()
         os.replace(temporary_path, target)
         temporary_path = None
+        directory_fd = os.open(target.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
     finally:
         if temporary_path is not None:
             temporary_path.unlink(missing_ok=True)
