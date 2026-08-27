@@ -574,12 +574,12 @@ Compose를 시작하고 fixture를 입력 폴더에 넣은 뒤 대시보드에�
 
 ### R4 종료 게이트 — M2
 
-- [ ] 실제 m4a에서 시간 정보가 있는 transcript가 생성된다.
-- [ ] 여러 화자가 `SPEAKER_XX`로 분리된다.
-- [ ] 모든 segment가 시간·범위 불변식을 만족한다.
-- [ ] OOM과 토큰 권한 오류가 서로 다른 조치 안내로 나타난다.
-- [ ] R3의 fake E2E가 계속 통과한다.
-- [ ] 실제 모델 평가는 일반 CI와 분리되어 재현 가능하다.
+- [x] 실제 m4a에서 시간 정보가 있는 transcript가 생성된다.
+- [x] 여러 화자가 `SPEAKER_XX`로 분리된다.
+- [x] 모든 segment가 시간·범위 불변식을 만족한다.
+- [x] OOM과 토큰 권한 오류가 서로 다른 조치 안내로 나타난다.
+- [x] R3의 fake E2E가 계속 통과한다.
+- [x] 실제 모델 평가는 일반 CI와 분리되어 재현 가능하다.
 
 ### 데모
 
@@ -1238,8 +1238,8 @@ Compose를 시작하고 fixture를 입력 폴더에 넣은 뒤 대시보드에�
 | R1 | `DONE` | [M0 구현 검증](progress/010_r1_06_common_checks.md), [재검증](progress/029_roadmap_gate_verification.md) | - |
 | R2 | `DONE` | [M0.5 Compose 검증](progress/018_r2_07_compose_completion.md), [재검증](progress/029_roadmap_gate_verification.md) | - |
 | R3 | `DONE` | [M1 구현 검증](progress/028_r3_m1_verification.md), [재검증](progress/029_roadmap_gate_verification.md) | - |
-| R4 | `BLOCKED` | [환경 결정 기록](03_development_environment.md) | Linux NVIDIA GPU runtime 검증, 실제 모델 의존성 고정 |
-| R5 | `NOT STARTED` | - | R4 |
+| R4 | `DONE` | [실제 모델 평가](progress/040_r4_08_fixed_audio_evaluation.md), [M2 검증](progress/041_r4_m2_verification.md) | - |
+| R5 | `NOT STARTED` | - | - |
 | R6 | `NOT STARTED` | - | 수동 확정 음성 표본, R5 |
 | R7 | `NOT STARTED` | - | R5, LLM 정책 |
 | R8 | `NOT STARTED` | - | R7, LLM 정책 |
