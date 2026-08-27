@@ -227,6 +227,28 @@ def test_empty_transcription_still_loads_and_calls_alignment_model(tmp_path: Pat
     assert runtime.align_calls[0]["transcript"] == []
 
 
+def test_accepts_alignment_output_split_into_more_sentence_segments(tmp_path: Path) -> None:
+    runtime = FakeRuntime(
+        {
+            "segments": [
+                {"start": 0, "end": 0.5, "text": "첫", "words": []},
+                {"start": 0.5, "end": 1.25, "text": "문장", "words": []},
+                {"start": 1.25, "end": 2.5, "text": "두 번째 문장", "words": []},
+            ]
+        }
+    )
+
+    result = adapter_for(tmp_path, runtime).align(
+        tmp_path / "audio.wav", source_segments(), "ko", audio_duration=2.5
+    )
+
+    assert [(segment.start, segment.end, segment.text) for segment in result.segments] == [
+        (0.0, 0.5, "첫"),
+        (0.5, 1.25, "문장"),
+        (1.25, 2.5, "두 번째 문장"),
+    ]
+
+
 @pytest.mark.parametrize("language", ["", "  "])
 def test_rejects_empty_language(tmp_path: Path, language: str) -> None:
     with pytest.raises(WhisperXAlignmentError) as error:
