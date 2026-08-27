@@ -31,6 +31,8 @@ RUN uv sync --frozen --no-dev --extra speech \
     && mkdir -p /models \
     && chown app:app /models
 
+ENV NLTK_DATA=/nltk
+
 USER app
 CMD ["uvicorn", "app.api:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]
 

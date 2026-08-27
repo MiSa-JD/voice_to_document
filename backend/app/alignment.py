@@ -285,33 +285,51 @@ def _normalize_alignment_result(
     raw_segments = raw_result.get("segments")
     if not isinstance(raw_segments, list):
         raise _invalid_response()
-    if len(raw_segments) > len(fallback_segments):
-        raise _invalid_response()
 
     normalized: list[AlignedSegment] = []
-    for index, fallback in enumerate(fallback_segments):
-        raw_segment: object = raw_segments[index] if index < len(raw_segments) else {}
-        if not isinstance(raw_segment, Mapping):
-            raise _invalid_response()
-        start, end = _segment_bounds(raw_segment, fallback, audio_duration)
-        raw_text = raw_segment.get("text")
-        text = raw_text if isinstance(raw_text, str) else fallback.text
-        raw_words = raw_segment.get("words", [])
-        if not isinstance(raw_words, list):
-            raise _invalid_response()
-        words = tuple(_normalize_word(word, audio_duration) for word in raw_words)
-        normalized.append(AlignedSegment(start=start, end=end, text=text, words=words))
+    if len(raw_segments) <= len(fallback_segments):
+        for index, fallback in enumerate(fallback_segments):
+            raw_segment: object = raw_segments[index] if index < len(raw_segments) else {}
+            normalized.append(_normalize_segment(raw_segment, fallback, audio_duration))
+        return tuple(normalized)
+
+    for raw_segment in raw_segments:
+        normalized.append(_normalize_segment(raw_segment, None, audio_duration))
     return tuple(normalized)
+
+
+def _normalize_segment(
+    raw_segment: object,
+    fallback: TranscriptionSegment | None,
+    audio_duration: float,
+) -> AlignedSegment:
+    if not isinstance(raw_segment, Mapping):
+        raise _invalid_response()
+    start, end = _segment_bounds(raw_segment, fallback, audio_duration)
+    raw_text = raw_segment.get("text")
+    if isinstance(raw_text, str):
+        text = raw_text
+    elif fallback is not None:
+        text = fallback.text
+    else:
+        raise _invalid_response()
+    raw_words = raw_segment.get("words", [])
+    if not isinstance(raw_words, list):
+        raise _invalid_response()
+    words = tuple(_normalize_word(word, audio_duration) for word in raw_words)
+    return AlignedSegment(start=start, end=end, text=text, words=words)
 
 
 def _segment_bounds(
     raw_segment: Mapping[object, object],
-    fallback: TranscriptionSegment,
+    fallback: TranscriptionSegment | None,
     audio_duration: float,
 ) -> tuple[float, float]:
     start = _finite_number(raw_segment.get("start"))
     end = _finite_number(raw_segment.get("end"))
     if start is None or end is None or end < start:
+        if fallback is None:
+            raise _invalid_response()
         start, end = fallback.start, fallback.end
     return _clamp_bounds(start, end, audio_duration)
 

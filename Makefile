@@ -10,7 +10,8 @@ install:
 	$(NPM) ci
 
 runtime-dirs:
-	mkdir -p runtime/inbox runtime/transcripts runtime/speakers runtime/documents runtime/app runtime/model-cache
+	mkdir -p runtime/inbox runtime/transcripts runtime/speakers runtime/documents runtime/app runtime/model-cache runtime/model-eval runtime/nltk-cache
+	chmod 700 runtime/nltk-cache
 
 check-format:
 	$(UV) run ruff format --check backend
@@ -101,6 +102,15 @@ diarization-smoke: runtime-dirs
 	COMPOSE_PROJECT_NAME="$$diarization_project" MODEL_RUN_UID="$$model_uid" MODEL_RUN_GID="$$model_gid" \
 		docker compose -f compose.yaml -f compose.gpu.yaml --profile diarization run --build --rm diarization-smoke
 
-model-eval:
-	@echo "R4에서 Linux NVIDIA GPU와 실제 모델 환경을 준비한 뒤 사용할 수 있습니다." >&2
-	@exit 2
+model-eval: runtime-dirs
+	@set -eu; \
+	eval_project="voice-to-document-model-eval-$$$$"; \
+	model_uid="$$(id -u)"; \
+	model_gid="$$(id -g)"; \
+	cleanup() { \
+		COMPOSE_PROJECT_NAME="$$eval_project" MODEL_RUN_UID="$$model_uid" MODEL_RUN_GID="$$model_gid" \
+			docker compose -f compose.yaml -f compose.gpu.yaml down --remove-orphans >/dev/null 2>&1 || true; \
+	}; \
+	trap cleanup EXIT HUP INT TERM; \
+	COMPOSE_PROJECT_NAME="$$eval_project" MODEL_RUN_UID="$$model_uid" MODEL_RUN_GID="$$model_gid" \
+		docker compose -f compose.yaml -f compose.gpu.yaml --profile model-eval run --build --rm model-eval
