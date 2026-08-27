@@ -57,3 +57,22 @@ def test_readiness_detects_path_removed_after_start(settings_values: dict[str, A
 
     assert response.status_code == 503
     assert response.json()["checks"]["transcript_root"]["status"] == "error"
+
+
+def test_api_real_speech_readiness_does_not_require_worker_model_cache(
+    settings_values: dict[str, Any], tmp_path: Path
+) -> None:
+    settings_values.update(
+        {
+            "SERVICE_NAME": "api",
+            "SPEECH_MODE": "real",
+            "HF_TOKEN": "",
+            "MODEL_CACHE_ROOT": tmp_path / "not-mounted-in-api",
+        }
+    )
+    client = TestClient(create_app(Settings(**settings_values)))
+
+    response = client.get("/health/ready")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "ready"
