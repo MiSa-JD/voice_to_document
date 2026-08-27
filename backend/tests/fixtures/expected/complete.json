@@ -16,6 +16,7 @@
     }
   ],
   "classification": {
+    "schema_version": 1,
     "category": "회의",
     "confidence": 0.99,
     "reason": "안건과 후속 작업을 논의하는 두 화자의 대화"

@@ -102,6 +102,7 @@ class Transcript(BaseModel):
 
 
 class Classification(BaseModel):
+    schema_version: Literal[1]
     category: NonEmptyText
     confidence: float = Field(ge=0, le=1)
     reason: NonEmptyText
