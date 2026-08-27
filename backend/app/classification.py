@@ -36,7 +36,7 @@ class DisallowedClassificationCategoryError(ClassificationError):
 
 class ClassificationAdapter(Protocol):
     @property
-    def fingerprint(self) -> dict[str, str | int]: ...
+    def fingerprint(self) -> dict[str, object]: ...
 
     def classify(
         self,
@@ -52,7 +52,7 @@ class FakeClassificationAdapter:
         self._response_loader = response_loader
 
     @property
-    def fingerprint(self) -> dict[str, str | int]:
+    def fingerprint(self) -> dict[str, object]:
         schema = json.dumps(
             Classification.model_json_schema(), sort_keys=True, separators=(",", ":")
         ).encode()
