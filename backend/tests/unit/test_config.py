@@ -155,7 +155,11 @@ def test_real_document_requires_llm_variable_names(settings_values: dict[str, An
     assert "LLM_MODEL" in message
 
 
-def test_legacy_ai_mode_remains_compatible(settings_values: dict[str, Any]) -> None:
+def test_legacy_ai_mode_remains_compatible(
+    settings_values: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
     settings_values.pop("SPEECH_MODE")
     settings_values.pop("DOCUMENT_MODE")
     settings_values.update(
@@ -169,6 +173,7 @@ def test_legacy_ai_mode_remains_compatible(settings_values: dict[str, Any]) -> N
         }
     )
 
+    monkeypatch.chdir(tmp_path)
     settings = Settings(**settings_values)
 
     assert settings.uses_legacy_ai_mode

@@ -14,6 +14,9 @@
 - 일반 개발·CI·기본 Compose는 계속 fake runtime을 사용하며 GPU를 예약하지 않는다.
 - 실제 전사 smoke는 `make transcription-smoke`로 실행하며 R4-02 표준화 후 WhisperX 3.8.6의
   `load_model` → `load_audio` → `model.transcribe(batch_size=4)` 흐름을 사용한다.
+- 실제 diarization smoke는 `make diarization-smoke`로 실행하며 표준화, 전사, alignment 뒤에
+  `pyannote/speaker-diarization-community-1`을 호출한다. 공개 결과는 transcript와 원본 경로를
+  포함하지 않는다.
 
 ## pyannote 접근
 
