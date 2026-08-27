@@ -12,12 +12,14 @@ from typing import Protocol, cast
 from pydantic import SecretStr
 
 from app.alignment import AlignedSegment
+from app.speech_failures import is_model_access_denied, is_model_download_failure
 from app.transcription import _is_out_of_memory
 
 
 class DiarizationErrorCode(StrEnum):
     MODEL_OOM = "MODEL_OOM"
     MODEL_ACCESS_DENIED = "MODEL_ACCESS_DENIED"
+    MODEL_DOWNLOAD_FAILED = "MODEL_DOWNLOAD_FAILED"
     MODEL_LOAD_FAILED = "MODEL_LOAD_FAILED"
     DIARIZATION_FAILED = "DIARIZATION_FAILED"
     INVALID_RESPONSE = "INVALID_RESPONSE"
@@ -192,7 +194,7 @@ class WhisperXDiarizationAdapter:
                     DiarizationErrorCode.MODEL_OOM,
                     "WhisperX ran out of memory during diarization",
                 ) from error
-            if _is_model_access_denied(error):
+            if is_model_access_denied(error):
                 raise WhisperXDiarizationError(
                     DiarizationErrorCode.MODEL_ACCESS_DENIED,
                     "The diarization model could not be accessed with the configured token",
@@ -234,10 +236,15 @@ class WhisperXDiarizationAdapter:
                     DiarizationErrorCode.MODEL_OOM,
                     "WhisperX ran out of memory while loading the diarization model",
                 ) from error
-            if _is_model_access_denied(error):
+            if is_model_access_denied(error):
                 raise WhisperXDiarizationError(
                     DiarizationErrorCode.MODEL_ACCESS_DENIED,
                     "The diarization model could not be accessed with the configured token",
+                ) from error
+            if is_model_download_failure(error):
+                raise WhisperXDiarizationError(
+                    DiarizationErrorCode.MODEL_DOWNLOAD_FAILED,
+                    "The diarization model could not be downloaded",
                 ) from error
             raise WhisperXDiarizationError(
                 DiarizationErrorCode.MODEL_LOAD_FAILED,
@@ -361,27 +368,6 @@ def _finite_number(value: object) -> float | None:
 def _positive_finite(value: object) -> float | None:
     number = _finite_number(value)
     return number if number is not None and number > 0 else None
-
-
-def _is_model_access_denied(error: BaseException) -> bool:
-    current: BaseException | None = error
-    visited: set[int] = set()
-    markers = (
-        "401",
-        "403",
-        "access denied",
-        "forbidden",
-        "gated repo",
-        "gated repository",
-        "unauthorized",
-    )
-    while current is not None and id(current) not in visited:
-        visited.add(id(current))
-        message = str(current).casefold()
-        if any(marker in message for marker in markers):
-            return True
-        current = current.__cause__ or current.__context__
-    return False
 
 
 def _invalid_response() -> WhisperXDiarizationError:

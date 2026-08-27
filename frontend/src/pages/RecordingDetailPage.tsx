@@ -147,13 +147,32 @@ function RecordingDetail({ data }: { data: RecordingDetailResponse }) {
       <section className="panel detail-section">
         <h2>처리 이력</h2>
         <ul className="job-list">
-          {data.jobs.map((job) => (
-            <li key={job.id}>
-              <strong>{job.kind}</strong>
-              <span>{job.status}</span>
-              <small>{job.attempts}회 시도</small>
-            </li>
-          ))}
+          {data.jobs.map((job) => {
+            const retryPending = job.status === 'queued' && job.error_code;
+            const failureStatus =
+              job.status === 'failed' && job.error_code
+                ? job.attempts >= 3
+                  ? '자동 재시도 종료'
+                  : '사용자 조치 필요'
+                : job.status;
+            return (
+              <li key={job.id}>
+                <div className="job-summary">
+                  <strong>{job.kind}</strong>
+                  <span>
+                    {retryPending ? '자동 재시도 대기' : failureStatus}
+                  </span>
+                  <small>{job.attempts}회 시도</small>
+                </div>
+                {job.error_code && job.error_message && (
+                  <p className="job-error" role="status">
+                    <code>{job.error_code}</code>
+                    <span>{job.error_message}</span>
+                  </p>
+                )}
+              </li>
+            );
+          })}
         </ul>
       </section>
     </>

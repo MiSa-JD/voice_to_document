@@ -297,11 +297,82 @@ def test_real_handler_records_sanitized_model_failure(settings_values: dict[str,
     assert dict(recording) == {
         "status": "FAILED",
         "last_error_code": "INVALID_RESPONSE",
-        "last_error_message": "WhisperX returned an invalid transcription response",
+        "last_error_message": (
+            "음성 모델이 유효하지 않은 결과를 반환했습니다. 모델 버전과 설정을 확인하세요."
+        ),
     }
     assert dict(job) == {
         "status": "failed",
         "error_code": "INVALID_RESPONSE",
-        "error_message": "WhisperX returned an invalid transcription response",
+        "error_message": (
+            "음성 모델이 유효하지 않은 결과를 반환했습니다. 모델 버전과 설정을 확인하세요."
+        ),
     }
     assert adapter.path is not None and not adapter.path.exists()
+
+
+def test_model_oom_fails_once_with_action_guidance(settings_values: dict[str, Any]) -> None:
+    settings = _real_settings(settings_values)
+    source = settings.recording_input_dir / "complete.m4a"
+    shutil.copyfile(FIXTURE, source)
+    ingest_file(settings.database_path, source)
+    handler = RealSpeechPipelineHandler(
+        settings,
+        logging.getLogger("test"),
+        transcription_adapter=StubTranscriptionAdapter(
+            WhisperXAdapterError(WhisperXErrorCode.MODEL_OOM, "private oom detail")
+        ),
+        alignment_adapter=StubAlignmentAdapter(),
+        diarization_adapter=StubDiarizationAdapter(),
+    )
+
+    assert process_one_job(settings.database_path, handler, logging.getLogger("test"))
+
+    with connect(settings.database_path) as connection:
+        job = connection.execute(
+            "SELECT status, attempts, error_code, error_message FROM jobs"
+        ).fetchone()
+    assert dict(job) == {
+        "status": "failed",
+        "attempts": 1,
+        "error_code": "MODEL_OOM",
+        "error_message": ("GPU 메모리가 부족합니다. WHISPER_BATCH_SIZE를 낮춘 뒤 다시 실행하세요."),
+    }
+
+
+def test_model_download_retries_three_times_then_fails(
+    settings_values: dict[str, Any],
+) -> None:
+    settings = _real_settings(settings_values)
+    source = settings.recording_input_dir / "complete.m4a"
+    shutil.copyfile(FIXTURE, source)
+    ingest_file(settings.database_path, source)
+    handler = RealSpeechPipelineHandler(
+        settings,
+        logging.getLogger("test"),
+        transcription_adapter=StubTranscriptionAdapter(
+            WhisperXAdapterError(
+                WhisperXErrorCode.MODEL_DOWNLOAD_FAILED,
+                "private network detail",
+            )
+        ),
+        alignment_adapter=StubAlignmentAdapter(),
+        diarization_adapter=StubDiarizationAdapter(),
+    )
+
+    for expected_attempt in (1, 2, 3):
+        assert process_one_job(settings.database_path, handler, logging.getLogger("test"))
+        with connect(settings.database_path) as connection:
+            job = connection.execute(
+                "SELECT status, attempts, error_code, error_message FROM jobs"
+            ).fetchone()
+            if expected_attempt < 3:
+                connection.execute("UPDATE jobs SET available_at = '2000-01-01T00:00:00+00:00'")
+        assert job["attempts"] == expected_attempt
+        assert job["status"] == ("queued" if expected_attempt < 3 else "failed")
+        assert job["error_code"] == "MODEL_DOWNLOAD_FAILED"
+        assert job["error_message"] == (
+            "모델을 내려받지 못했습니다. 네트워크와 모델 캐시 권한을 확인하세요."
+        )
+
+    assert not process_one_job(settings.database_path, handler, logging.getLogger("test"))

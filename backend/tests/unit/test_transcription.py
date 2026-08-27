@@ -200,6 +200,14 @@ def test_rejects_invalid_model_response(tmp_path: Path, result: object) -> None:
             WhisperXErrorCode.MODEL_OOM,
         ),
         (
+            FakeRuntime(FakeModel(valid_result()), load_error=RuntimeError("403 gated repo")),
+            WhisperXErrorCode.MODEL_ACCESS_DENIED,
+        ),
+        (
+            FakeRuntime(FakeModel(valid_result()), load_error=RuntimeError("network timed out")),
+            WhisperXErrorCode.MODEL_DOWNLOAD_FAILED,
+        ),
+        (
             FakeRuntime(FakeModel(valid_result(), error=RuntimeError("inference exploded"))),
             WhisperXErrorCode.TRANSCRIPTION_FAILED,
         ),

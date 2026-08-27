@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import math
+import stat
 import uuid
 from collections.abc import Sequence
 from pathlib import Path
@@ -26,6 +27,7 @@ from app.media import AudioNormalizationError, normalized_audio
 from app.pipeline import FakePipelineHandler
 from app.runtime import PermanentJobError, RetryableJobError
 from app.schema import RecordingStatus, Segment, SpeechModelFingerprints, Transcript
+from app.speech_failures import speech_failure_policy
 from app.transcription import (
     TranscriptionResult,
     TranscriptionSegment,
@@ -61,7 +63,9 @@ class DiarizationAdapter(Protocol):
 
 
 class RealSpeechInputError(RuntimeError):
-    pass
+    def __init__(self, code: str) -> None:
+        super().__init__(code)
+        self.code = code
 
 
 class RealSpeechPipelineHandler(FakePipelineHandler):
@@ -108,21 +112,15 @@ class RealSpeechPipelineHandler(FakePipelineHandler):
         try:
             self._transcribe_real(job)
         except AudioNormalizationError as error:
-            self._fail_permanently(job, str(error.code), str(error))
+            self._fail_with_policy(job, str(error.code), cause=error)
         except (WhisperXAdapterError, WhisperXAlignmentError, WhisperXDiarizationError) as error:
-            self._fail_permanently(job, str(error.code), str(error))
+            self._fail_with_policy(job, str(error.code), cause=error)
         except RealSpeechInputError as error:
-            self._fail_permanently(job, "INPUT_NOT_AVAILABLE", str(error))
+            self._fail_with_policy(job, error.code, cause=error)
         except ValueError as error:
-            self._fail_permanently(
-                job,
-                "INVALID_SPEECH_RESULT",
-                "실제 음성 모델 결과가 유효하지 않습니다.",
-                cause=error,
-            )
+            self._fail_with_policy(job, "INVALID_SPEECH_RESULT", cause=error)
         except OSError as error:
-            self._mark_failed(job.recording_id, "ARTIFACT_IO_ERROR", "결과 파일을 쓸 수 없습니다.")
-            raise RetryableJobError("ARTIFACT_IO_ERROR", "artifact write failed") from error
+            self._fail_with_policy(job, "ARTIFACT_IO_ERROR", cause=error)
         except (PermanentJobError, RetryableJobError):
             raise
         except Exception:
@@ -165,22 +163,32 @@ class RealSpeechPipelineHandler(FakePipelineHandler):
         try:
             source = Path(value).resolve(strict=True)
             input_root = self.settings.recording_input_dir.resolve(strict=True)
+        except FileNotFoundError as error:
+            raise RealSpeechInputError("INPUT_NOT_AVAILABLE") from error
         except OSError as error:
-            raise RealSpeechInputError("원본 녹음을 읽을 수 없습니다.") from error
-        if not source.is_relative_to(input_root) or not source.is_file():
-            raise RealSpeechInputError("원본 녹음을 읽을 수 없습니다.")
+            raise RealSpeechInputError("INPUT_IO_ERROR") from error
+        if not source.is_relative_to(input_root):
+            raise RealSpeechInputError("INPUT_NOT_AVAILABLE")
+        try:
+            if not stat.S_ISREG(source.stat().st_mode):
+                raise RealSpeechInputError("INPUT_NOT_AVAILABLE")
+        except FileNotFoundError as error:
+            raise RealSpeechInputError("INPUT_NOT_AVAILABLE") from error
+        except OSError as error:
+            raise RealSpeechInputError("INPUT_IO_ERROR") from error
         return source
 
-    def _fail_permanently(
+    def _fail_with_policy(
         self,
         job: Job,
         code: str,
-        message: str,
         *,
         cause: Exception | None = None,
     ) -> None:
-        self._mark_failed(job.recording_id, code, message)
-        error = PermanentJobError(code, message)
+        policy = speech_failure_policy(code)
+        self._mark_failed(job.recording_id, code, policy.message)
+        error_type = RetryableJobError if policy.retryable else PermanentJobError
+        error = error_type(code, policy.message)
         if cause is not None:
             raise error from cause
         raise error
