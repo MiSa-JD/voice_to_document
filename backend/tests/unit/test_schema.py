@@ -29,7 +29,7 @@ def test_normalized_transcript_accepts_valid_data() -> None:
         segments=[_segment()],
     )
 
-    assert transcript.schema_version == 1
+    assert transcript.schema_version == 2
 
 
 @pytest.mark.parametrize(
@@ -43,6 +43,41 @@ def test_normalized_transcript_accepts_valid_data() -> None:
 def test_segment_rejects_invalid_data(changes: dict[str, object]) -> None:
     with pytest.raises(ValidationError):
         _segment(**changes)
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"local_speaker_id": None, "assignment_status": "assigned"},
+        {"local_speaker_id": None, "assignment_status": "overlap"},
+        {
+            "local_speaker_id": "SPEAKER_00",
+            "assignment_status": "unassigned",
+        },
+        {
+            "assignment_status": "overlap",
+            "overlapping_speaker_ids": ["SPEAKER_00"],
+        },
+        {
+            "assignment_status": "assigned",
+            "overlapping_speaker_ids": ["SPEAKER_00", "SPEAKER_01"],
+        },
+    ],
+)
+def test_segment_rejects_inconsistent_speaker_assignment(changes: dict[str, object]) -> None:
+    with pytest.raises(ValidationError):
+        _segment(**changes)
+
+
+def test_unassigned_and_overlap_segments_preserve_assignment_details() -> None:
+    unassigned = _segment(local_speaker_id=None, assignment_status="unassigned")
+    overlap = _segment(
+        assignment_status="overlap",
+        overlapping_speaker_ids=["SPEAKER_00", "SPEAKER_01"],
+    )
+
+    assert unassigned.local_speaker_id is None
+    assert overlap.overlapping_speaker_ids == ["SPEAKER_00", "SPEAKER_01"]
 
 
 def test_unknown_recording_status_is_rejected() -> None:

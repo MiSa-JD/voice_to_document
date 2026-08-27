@@ -123,6 +123,18 @@ make alignment-smoke
 make diarization-smoke
 ```
 
+실제 speech worker를 실행할 때는 GPU override를 함께 지정합니다. 이 구성은 worker만 speech
+의존성이 포함된 이미지와 GPU를 사용하고 API와 web은 기본 이미지를 유지합니다.
+
+```sh
+docker compose -f compose.yaml -f compose.gpu.yaml up --build -d --wait
+docker compose -f compose.yaml -f compose.gpu.yaml down
+```
+
+실제 worker는 원본 m4a를 임시 mono 16 kHz WAV로 표준화한 뒤 전사, alignment, diarization을
+순서대로 실행합니다. 정규화된 segment와 모델 fingerprint는 schema v2 `transcript.json`과
+SQLite에 저장되고, 미확정·겹침·미배정 화자는 검토 대기 상태로 보존됩니다.
+
 성공 출력은 GPU/driver/CUDA와 패키지 버전만 포함하며 토큰이나 전체 환경 변수는 출력하지
 않습니다. 실제 전사 smoke의 합성 tone/무음 결과는 품질이나 최적 batch size를 판단하는 자료로
 사용하지 않으며 해당 평가는 R4-08에서 수행합니다.

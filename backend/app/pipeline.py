@@ -173,8 +173,9 @@ class FakePipelineHandler:
                 """
                 INSERT INTO segments(
                     id, recording_id, start_ms, end_ms, text, local_speaker_id,
+                    assignment_status, overlapping_speaker_ids_json,
                     person_id, speaker_name, revision
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 [
                     (
@@ -184,6 +185,8 @@ class FakePipelineHandler:
                         segment.end_ms,
                         segment.text,
                         segment.local_speaker_id,
+                        segment.assignment_status,
+                        json.dumps(segment.overlapping_speaker_ids, sort_keys=True),
                         str(segment.person_id) if segment.person_id else None,
                         segment.speaker_name,
                         transcript.revision,
@@ -203,6 +206,7 @@ class FakePipelineHandler:
             Path(recording_id) / "transcript.json",
             _json_bytes(transcript.model_dump(mode="json")),
             transcript.revision,
+            schema_version=transcript.schema_version,
         )
 
     def _set_review_required(self, recording_id: str) -> None:
@@ -245,7 +249,11 @@ class FakePipelineHandler:
             "",
         ]
         for segment in segments:
-            speaker = segment.speaker_name or f"미확정({segment.local_speaker_id})"
+            speaker = segment.speaker_name or (
+                f"미확정({segment.local_speaker_id})"
+                if segment.local_speaker_id is not None
+                else "화자 미배정"
+            )
             lines.extend([f"**[{_timestamp(segment.start_ms)}] {speaker}**", segment.text, ""])
         write_artifact(
             self.settings.database_path,
@@ -261,12 +269,18 @@ class FakePipelineHandler:
         with connect(self.settings.database_path) as connection:
             rows = connection.execute(
                 """
-                SELECT id, start_ms, end_ms, local_speaker_id, person_id, speaker_name, text
+                SELECT id, start_ms, end_ms, local_speaker_id, assignment_status,
+                       overlapping_speaker_ids_json, person_id, speaker_name, text
                 FROM segments WHERE recording_id = ? ORDER BY start_ms, end_ms, id
                 """,
                 (recording_id,),
             ).fetchall()
-        return [Segment.model_validate(dict(row)) for row in rows]
+        segments: list[Segment] = []
+        for row in rows:
+            value = dict(row)
+            value["overlapping_speaker_ids"] = json.loads(value.pop("overlapping_speaker_ids_json"))
+            segments.append(Segment.model_validate(value))
+        return segments
 
     def _mark_failed(self, recording_id: str, code: str, message: str) -> None:
         try:

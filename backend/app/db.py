@@ -4,7 +4,7 @@ import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 
-CURRENT_SCHEMA_VERSION = 2
+CURRENT_SCHEMA_VERSION = 3
 
 
 class FutureSchemaError(RuntimeError):
@@ -114,6 +114,49 @@ MIGRATIONS: dict[int, tuple[str, ...]] = {
             revision INTEGER NOT NULL CHECK (revision > 0)
         )
         """,
+        """
+        CREATE INDEX segments_recording_time
+        ON segments(recording_id, start_ms, end_ms, id)
+        """,
+    ),
+    3: (
+        "ALTER TABLE segments RENAME TO segments_v2",
+        """
+        CREATE TABLE segments (
+            id TEXT PRIMARY KEY,
+            recording_id TEXT NOT NULL REFERENCES recordings(id) ON DELETE CASCADE,
+            start_ms INTEGER NOT NULL CHECK (start_ms >= 0),
+            end_ms INTEGER NOT NULL CHECK (end_ms > start_ms),
+            text TEXT NOT NULL CHECK (length(trim(text)) > 0),
+            local_speaker_id TEXT,
+            assignment_status TEXT NOT NULL DEFAULT 'assigned' CHECK (
+                assignment_status IN ('assigned', 'overlap', 'unassigned')
+            ),
+            overlapping_speaker_ids_json TEXT NOT NULL DEFAULT '[]',
+            person_id TEXT,
+            speaker_name TEXT,
+            speaker_source TEXT NOT NULL DEFAULT 'unresolved' CHECK (
+                speaker_source IN ('manual', 'auto', 'unresolved')
+            ),
+            speaker_score REAL,
+            revision INTEGER NOT NULL CHECK (revision > 0),
+            CHECK (
+                (assignment_status = 'unassigned' AND local_speaker_id IS NULL)
+                OR (assignment_status != 'unassigned' AND local_speaker_id IS NOT NULL)
+            )
+        )
+        """,
+        """
+        INSERT INTO segments(
+            id, recording_id, start_ms, end_ms, text, local_speaker_id,
+            assignment_status, overlapping_speaker_ids_json, person_id, speaker_name,
+            speaker_source, speaker_score, revision
+        )
+        SELECT id, recording_id, start_ms, end_ms, text, local_speaker_id,
+               'assigned', '[]', person_id, speaker_name, speaker_source, speaker_score, revision
+        FROM segments_v2
+        """,
+        "DROP TABLE segments_v2",
         """
         CREATE INDEX segments_recording_time
         ON segments(recording_id, start_ms, end_ms, id)
