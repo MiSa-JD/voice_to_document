@@ -158,7 +158,11 @@ def evaluate_batch(sources: Mapping[str, Path], batch_size: int) -> BatchEvaluat
         for directory in directories.values():
             directory.mkdir()
         settings = evaluation_settings(directories, batch_size)
-        handler = RealSpeechPipelineHandler(settings, logging.getLogger("model-eval"))
+        handler = RealSpeechPipelineHandler(
+            settings,
+            logging.getLogger("model-eval"),
+            continue_to_documents=False,
+        )
         started = time.monotonic()
         samples: list[SampleEvaluation] = []
         fingerprints: dict[str, dict[str, object]] | None = None

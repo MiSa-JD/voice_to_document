@@ -70,29 +70,43 @@ class FakeClassificationAdapter:
     ) -> Classification:
         if not allowed_categories:
             raise ValueError("allowed_categories must not be empty")
+        return self.classify_content_hash(transcript.content_sha256, allowed_categories)
+
+    def classify_content_hash(
+        self,
+        content_sha256: str,
+        allowed_categories: tuple[str, ...],
+    ) -> Classification:
         try:
-            raw = self._response_loader(transcript.content_sha256)
+            raw = self._response_loader(content_sha256)
         except TimeoutError as error:
             raise ClassificationTimeoutError("classification response timed out") from error
-        value = _decode_response(raw)
-        missing = tuple(
-            name
-            for name in ("category", "confidence", "reason", "schema_version")
-            if name not in value
+        return validate_classification_response(raw, allowed_categories)
+
+
+def validate_classification_response(
+    raw: object,
+    allowed_categories: tuple[str, ...],
+) -> Classification:
+    if not allowed_categories:
+        raise ValueError("allowed_categories must not be empty")
+    value = _decode_response(raw)
+    missing = tuple(
+        name for name in ("category", "confidence", "reason", "schema_version") if name not in value
+    )
+    if missing:
+        raise MissingClassificationFieldError(
+            "classification response is missing required fields: " + ", ".join(missing)
         )
-        if missing:
-            raise MissingClassificationFieldError(
-                "classification response is missing required fields: " + ", ".join(missing)
-            )
-        try:
-            result = Classification.model_validate(value)
-        except ValidationError as error:
-            raise MalformedClassificationError("classification response violates schema") from error
-        if result.category not in allowed_categories:
-            raise DisallowedClassificationCategoryError(
-                f"classification category is not allowed: {result.category}"
-            )
-        return result
+    try:
+        result = Classification.model_validate(value)
+    except ValidationError as error:
+        raise MalformedClassificationError("classification response violates schema") from error
+    if result.category not in allowed_categories:
+        raise DisallowedClassificationCategoryError(
+            f"classification category is not allowed: {result.category}"
+        )
+    return result
 
 
 def _decode_response(raw: object) -> dict[str, Any]:

@@ -103,7 +103,7 @@ def test_document_root_takes_precedence_over_legacy_summary_root(
 
 
 def test_real_speech_only_requires_hf_token(settings_values: dict[str, Any]) -> None:
-    settings_values["SPEECH_MODE"] = "real"
+    settings_values.update({"SPEECH_MODE": "real", "SERVICE_NAME": "worker"})
 
     with pytest.raises(ValidationError, match="HF_TOKEN"):
         Settings(**settings_values)
@@ -113,6 +113,23 @@ def test_real_speech_only_requires_hf_token(settings_values: dict[str, Any]) -> 
 
     assert settings.effective_speech_mode == "real"
     assert settings.effective_document_mode == "fake"
+
+
+def test_api_real_speech_skips_worker_token_and_model_cache_validation(
+    settings_values: dict[str, Any], tmp_path: Path
+) -> None:
+    settings_values.update(
+        {
+            "SERVICE_NAME": "api",
+            "SPEECH_MODE": "real",
+            "HF_TOKEN": "",
+            "MODEL_CACHE_ROOT": tmp_path / "not-mounted-in-api",
+        }
+    )
+
+    settings = Settings(**settings_values)
+
+    assert settings.effective_speech_mode == "real"
 
 
 def test_whisper_language_blank_means_auto_detection(settings_values: dict[str, Any]) -> None:
@@ -137,6 +154,7 @@ def test_real_speech_validates_model_cache_root(
 ) -> None:
     settings_values.update(
         {
+            "SERVICE_NAME": "worker",
             "SPEECH_MODE": "real",
             "HF_TOKEN": "hf_private_test_value",
             "MODEL_CACHE_ROOT": value,
@@ -152,6 +170,7 @@ def test_real_speech_rejects_model_cache_overlapping_results(
 ) -> None:
     settings_values.update(
         {
+            "SERVICE_NAME": "worker",
             "SPEECH_MODE": "real",
             "HF_TOKEN": "hf_private_test_value",
             "MODEL_CACHE_ROOT": settings_values["TRANSCRIPT_ROOT"],
@@ -177,6 +196,7 @@ def test_real_speech_requires_writable_model_cache(
     monkeypatch.setattr(os, "access", fake_access)
     settings_values.update(
         {
+            "SERVICE_NAME": "worker",
             "SPEECH_MODE": "real",
             "HF_TOKEN": "hf_private_test_value",
         }

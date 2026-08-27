@@ -15,6 +15,11 @@
       "text": "두 번째 임시 화자입니다."
     }
   ],
-  "classification": null,
+  "classification": {
+    "schema_version": 1,
+    "category": "기타",
+    "confidence": 0.75,
+    "reason": "임시 화자 transcript fixture"
+  },
   "summary": null
 }

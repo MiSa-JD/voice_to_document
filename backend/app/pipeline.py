@@ -1,19 +1,73 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import sqlite3
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast
 
 from app.adapters import FakeAdapters, FakeFixtureNotFoundError
 from app.artifacts import safe_category_slug, write_artifact
+from app.classification import (
+    ClassificationAdapter,
+    ClassificationError,
+    ClassificationTimeoutError,
+    FakeClassificationAdapter,
+)
 from app.config import Settings
 from app.db import connect, utc_now
 from app.jobs import Job
+from app.long_transcript import (
+    LongTranscriptClassifier,
+    SegmentSlice,
+    TopicEvidence,
+    TranscriptIdentity,
+)
+from app.renderer import (
+    MARKDOWN_SCHEMA_VERSION,
+    render_transcript_json,
+    render_transcript_markdown,
+    transcript_artifact_paths,
+    with_classification,
+)
 from app.runtime import PermanentJobError, RetryableJobError
 from app.schema import Classification, MeetingSummary, RecordingStatus, Segment, Transcript
 from app.state import transition_and_enqueue, transition_recording
+
+
+class TranscriptRendererError(RuntimeError):
+    pass
+
+
+class _FakeTopicBackend:
+    def __init__(self, classification_adapter: FakeClassificationAdapter) -> None:
+        self.classification_adapter = classification_adapter
+
+    @property
+    def fingerprint(self) -> dict[str, object]:
+        return {"model": "fake-segment-topic-v1", "final": self.classification_adapter.fingerprint}
+
+    def extract(self, segments: tuple[SegmentSlice, ...]) -> str:
+        payload = "\n".join(
+            f"{item.segment_id}:{item.start_ms}:{item.end_ms}:{item.local_speaker_id}:"
+            f"{item.part_index}:{item.text}"
+            for item in segments
+        )
+        return hashlib.sha256(payload.encode()).hexdigest()
+
+    def classify_topics(
+        self,
+        identity: TranscriptIdentity,
+        topics: tuple[TopicEvidence, ...],
+        allowed_categories: tuple[str, ...],
+    ) -> Classification:
+        if not topics:
+            raise ValueError("topic evidence must not be empty")
+        return self.classification_adapter.classify_content_hash(
+            identity.content_sha256, allowed_categories
+        )
 
 
 class FakePipelineHandler:
@@ -22,10 +76,34 @@ class FakePipelineHandler:
         settings: Settings,
         logger: logging.Logger,
         adapters: FakeAdapters | None = None,
+        classification_adapter: ClassificationAdapter | None = None,
+        markdown_renderer: Callable[[Transcript], bytes] = render_transcript_markdown,
     ) -> None:
         self.settings = settings
         self.logger = logger
         self.adapters = adapters or FakeAdapters()
+        if classification_adapter is None:
+            direct_adapter = FakeClassificationAdapter(self._fake_classification_response)
+            topic_backend = _FakeTopicBackend(direct_adapter)
+            classification_adapter = LongTranscriptClassifier(
+                direct_adapter,
+                topic_backend,
+                topic_backend,
+                max_context_chars=settings.classification_context_max_chars,
+            )
+        self.classification_adapter = classification_adapter
+        self.markdown_renderer = markdown_renderer
+
+    def _fake_classification_response(self, content_sha256: str) -> object:
+        try:
+            return self.adapters.classification_response(content_sha256)
+        except FakeFixtureNotFoundError:
+            return {
+                "schema_version": 1,
+                "category": self.settings.categories[-1],
+                "confidence": 0.0,
+                "reason": "local deterministic fallback",
+            }
 
     def __call__(self, job: Job) -> None:
         try:
@@ -37,6 +115,21 @@ class FakePipelineHandler:
                 self._summarize(job)
             else:
                 raise PermanentJobError("UNSUPPORTED_JOB_KIND", f"unsupported job: {job.kind}")
+        except ClassificationTimeoutError as error:
+            self._mark_failed(job.recording_id, error.code, "분류 응답 시간이 초과되었습니다.")
+            raise RetryableJobError(error.code, "classification timed out") from error
+        except ClassificationError as error:
+            self._mark_failed(job.recording_id, error.code, "분류 결과가 유효하지 않습니다.")
+            raise PermanentJobError(error.code, "classification result is invalid") from error
+        except TranscriptRendererError as error:
+            self._mark_failed(
+                job.recording_id,
+                "TRANSCRIPT_RENDER_ERROR",
+                "Markdown 결과를 생성할 수 없습니다.",
+            )
+            raise PermanentJobError(
+                "TRANSCRIPT_RENDER_ERROR", "transcript markdown render failed"
+            ) from error
         except OSError as error:
             self._mark_failed(job.recording_id, "ARTIFACT_IO_ERROR", "결과 파일을 쓸 수 없습니다.")
             raise RetryableJobError("ARTIFACT_IO_ERROR", "artifact write failed") from error
@@ -63,42 +156,30 @@ class FakePipelineHandler:
         self._write_transcript_json(transcript)
         if transcript.needs_speaker_review:
             self._set_review_required(job.recording_id)
-            return
-        transition_and_enqueue(
-            self.settings.database_path,
-            job.recording_id,
-            RecordingStatus.CLASSIFYING,
-            "classify",
-            transcript.revision,
-            "fake-document-v1",
-        )
+        self._enqueue_classification(transcript)
 
     def _classify(self, job: Job) -> None:
         recording = self._recording(job.recording_id)
-        classification = self.adapters.classify(str(recording["content_sha256"]))
-        classification.ensure_allowed(self.settings.categories)
+        self._enter(job.recording_id, RecordingStatus.CLASSIFYING)
+        transcript = self._load_transcript(job.recording_id, int(recording["revision"]))
+        classification = self.classification_adapter.classify(transcript, self.settings.categories)
         self._save_classification(job.recording_id, classification)
-        self._write_transcript_markdown(job.recording_id, classification)
-        if classification.category in self.settings.auto_summary_categories:
-            transition_and_enqueue(
-                self.settings.database_path,
-                job.recording_id,
-                RecordingStatus.SUMMARIZING,
-                "summarize",
-                int(recording["revision"]),
-                "fake-summary-v1",
-            )
-        else:
-            transition_recording(
-                self.settings.database_path,
-                job.recording_id,
-                RecordingStatus.READY_FOR_SUMMARY,
-            )
-            transition_recording(
-                self.settings.database_path,
-                job.recording_id,
-                RecordingStatus.COMPLETED,
-            )
+        classified = with_classification(
+            transcript,
+            classification,
+            self.classification_adapter.fingerprint,
+        )
+        self._write_classified_transcript_artifacts(classified)
+        transition_recording(
+            self.settings.database_path,
+            job.recording_id,
+            RecordingStatus.READY_FOR_SUMMARY,
+        )
+        transition_recording(
+            self.settings.database_path,
+            job.recording_id,
+            RecordingStatus.COMPLETED,
+        )
 
     def _summarize(self, job: Job) -> None:
         recording = self._recording(job.recording_id)
@@ -198,12 +279,13 @@ class FakePipelineHandler:
 
     def _write_transcript_json(self, transcript: Transcript) -> None:
         recording_id = str(transcript.recording_id)
+        paths = transcript_artifact_paths(recording_id)
         write_artifact(
             self.settings.database_path,
             self.settings.transcript_root,
             recording_id,
             "transcript_json",
-            Path(recording_id) / "transcript.json",
+            paths.json,
             _json_bytes(transcript.model_dump(mode="json")),
             transcript.revision,
             schema_version=transcript.schema_version,
@@ -214,8 +296,22 @@ class FakePipelineHandler:
             connection.execute(
                 "UPDATE recordings SET needs_speaker_review = 1 WHERE id = ?", (recording_id,)
             )
-        transition_recording(
-            self.settings.database_path, recording_id, RecordingStatus.SPEAKER_REVIEW
+
+    def _enqueue_classification(self, transcript: Transcript) -> None:
+        fingerprint = hashlib.sha256(
+            json.dumps(
+                self.classification_adapter.fingerprint,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode()
+        ).hexdigest()
+        transition_and_enqueue(
+            self.settings.database_path,
+            str(transcript.recording_id),
+            RecordingStatus.CLASSIFYING,
+            "classify",
+            transcript.revision,
+            fingerprint,
         )
 
     def _save_classification(self, recording_id: str, classification: Classification) -> None:
@@ -235,34 +331,52 @@ class FakePipelineHandler:
                 ),
             )
 
-    def _write_transcript_markdown(self, recording_id: str, classification: Classification) -> None:
-        recording = self._recording(recording_id)
-        segments = self._segments(recording_id)
-        lines = [
-            f"# {recording['original_name']}",
-            "",
-            f"- 원본 파일: {recording['original_name']}",
-            f"- 범주: {classification.category}",
-            f"- 처리 시각: {utc_now()}",
-            "",
-            "## 전체 내용",
-            "",
-        ]
-        for segment in segments:
-            speaker = segment.speaker_name or (
-                f"미확정({segment.local_speaker_id})"
-                if segment.local_speaker_id is not None
-                else "화자 미배정"
-            )
-            lines.extend([f"**[{_timestamp(segment.start_ms)}] {speaker}**", segment.text, ""])
+    def _load_transcript(self, recording_id: str, revision: int) -> Transcript:
+        with connect(self.settings.database_path) as connection:
+            artifact = connection.execute(
+                """
+                SELECT relative_path FROM artifacts
+                WHERE recording_id = ? AND kind = 'transcript_json' AND revision = ?
+                """,
+                (recording_id, revision),
+            ).fetchone()
+        if artifact is None:
+            raise ValueError("transcript JSON artifact is missing")
+        root = self.settings.transcript_root.resolve()
+        path = (root / str(artifact["relative_path"])).resolve()
+        if not path.is_relative_to(root):
+            raise ValueError("transcript artifact path leaves configured root")
+        transcript = Transcript.model_validate_json(path.read_bytes())
+        if str(transcript.recording_id) != recording_id or transcript.revision != revision:
+            raise ValueError("transcript artifact identity does not match job")
+        return transcript
+
+    def _write_classified_transcript_artifacts(self, transcript: Transcript) -> None:
+        recording_id = str(transcript.recording_id)
+        paths = transcript_artifact_paths(recording_id)
         write_artifact(
             self.settings.database_path,
             self.settings.transcript_root,
             recording_id,
+            "transcript_json",
+            paths.json,
+            render_transcript_json(transcript),
+            transcript.revision,
+            schema_version=transcript.schema_version,
+        )
+        try:
+            markdown = self.markdown_renderer(transcript)
+        except Exception as error:
+            raise TranscriptRendererError from error
+        write_artifact(
+            self.settings.database_path,
+            self.settings.document_root,
+            recording_id,
             "transcript_markdown",
-            Path(recording_id) / "transcript.md",
-            "\n".join(lines).encode("utf-8"),
-            int(recording["revision"]),
+            paths.markdown,
+            markdown,
+            transcript.revision,
+            schema_version=MARKDOWN_SCHEMA_VERSION,
         )
 
     def _segments(self, recording_id: str) -> list[Segment]:
@@ -300,11 +414,6 @@ class FakePipelineHandler:
 
 def _json_bytes(value: dict[str, Any]) -> bytes:
     return (json.dumps(value, ensure_ascii=False, sort_keys=True, indent=2) + "\n").encode()
-
-
-def _timestamp(milliseconds: int) -> str:
-    seconds = milliseconds // 1000
-    return f"{seconds // 60:02d}:{seconds % 60:02d}"
 
 
 def _summary_markdown(summary: MeetingSummary) -> str:

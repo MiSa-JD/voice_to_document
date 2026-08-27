@@ -91,7 +91,7 @@ def _required_paths(settings: Settings) -> dict[str, Path]:
         "recording_input": settings.recording_input_dir,
         "transcript_root": settings.transcript_root,
         "speaker_root": settings.speaker_root,
-        "summary_root": settings.summary_root,
+        "document_root": settings.document_root,
         "app_data": settings.app_data_dir,
     }
 

@@ -71,8 +71,8 @@ word 개수, 단어 시간이 생성된 segment 수, 처리 시간, cache와 GPU
 
 ## Compose 실행
 
-기본 서버 구성은 fake 모드이며 브라우저 서비스는 모든 인터페이스의 `38000` 포트에
-공개합니다. 같은 장비에서는 `http://127.0.0.1:38000`으로 접속합니다.
+기본 서버 구성은 `SPEECH_MODE=fake`인 개발용 stack이며 브라우저 서비스는 모든 인터페이스의
+`38000` 포트에 공개합니다. 같은 장비에서는 `http://127.0.0.1:38000`으로 접속합니다.
 
 ```sh
 cp .env.example .env
@@ -126,17 +126,20 @@ make alignment-smoke
 make diarization-smoke
 ```
 
-실제 speech worker를 실행할 때는 GPU override를 함께 지정합니다. 이 구성은 worker만 speech
-의존성이 포함된 이미지와 GPU를 사용하고 API와 web은 기본 이미지를 유지합니다.
+실제 m4a를 STT→Markdown으로 처리할 때는 `SPEECH_MODE=real`, `DOCUMENT_MODE=fake`,
+`HF_TOKEN`을 설정하고 GPU override를 함께 지정합니다. 이 구성은 worker만 speech 의존성이
+포함된 이미지, model cache와 GPU를 사용하고 API와 web은 기본 이미지를 유지합니다.
 
 ```sh
 docker compose -f compose.yaml -f compose.gpu.yaml up --build -d --wait
 docker compose -f compose.yaml -f compose.gpu.yaml down
 ```
 
-실제 worker는 원본 m4a를 임시 mono 16 kHz WAV로 표준화한 뒤 전사, alignment, diarization을
-순서대로 실행합니다. 정규화된 segment와 모델 fingerprint는 schema v2 `transcript.json`과
-SQLite에 저장되고, 미확정·겹침·미배정 화자는 검토 대기 상태로 보존됩니다.
+실제 worker는 원본 m4a를 임시 mono 16 kHz WAV로 표준화한 뒤 전사, alignment, diarization,
+local fake 분류를 순서대로 실행합니다. 동일 revision의 schema v2 JSON은
+`${TRANSCRIPT_HOST_DIR:-${DATA_ROOT}/transcripts}/<recording-id>/transcript.json`, Markdown은
+`${DATA_ROOT}/documents/<recording-id>/transcript.md`에 저장됩니다. Markdown에는 timestamp와
+`SPEAKER_XX` 임시 화자가 표시되며 실제 화자 이름 확정은 R5 범위입니다.
 
 성공 출력은 GPU/driver/CUDA와 패키지 버전만 포함하며 토큰이나 전체 환경 변수는 출력하지
 않습니다. 실제 전사 smoke의 합성 tone/무음 결과는 품질이나 최적 batch size를 판단하는 자료로

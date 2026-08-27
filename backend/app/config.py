@@ -34,6 +34,11 @@ class Settings(BaseSettings):
         default="강의,회의",
         validation_alias="AUTO_SUMMARY_CATEGORIES",
     )
+    classification_context_max_chars: int = Field(
+        default=120_000,
+        gt=0,
+        validation_alias="CLASSIFICATION_CONTEXT_MAX_CHARS",
+    )
 
     ai_mode: Literal["fake", "real"] | None = Field(
         default=None,
@@ -158,9 +163,12 @@ class Settings(BaseSettings):
                 + ", ".join(sorted(unknown))
             )
 
-        if self.effective_speech_mode == "real" and not _has_value(self.hf_token):
+        uses_real_speech_runtime = (
+            self.service_name == "worker" and self.effective_speech_mode == "real"
+        )
+        if uses_real_speech_runtime and not _has_value(self.hf_token):
             raise ValueError("real SPEECH_MODE requires: HF_TOKEN")
-        if self.effective_speech_mode == "real":
+        if uses_real_speech_runtime:
             if not self.model_cache_root.is_absolute():
                 raise ValueError("MODEL_CACHE_ROOT must be an absolute path")
             try:
@@ -200,6 +208,7 @@ class Settings(BaseSettings):
             "categories": self.categories,
             "category_slugs": {item.display_name: item.slug for item in self.category_definitions},
             "auto_summary_categories": self.auto_summary_categories,
+            "classification_context_max_chars": self.classification_context_max_chars,
             "log_level": self.log_level,
         }
 

@@ -212,7 +212,7 @@ def _real_settings(settings_values: dict[str, Any]) -> Settings:
     return Settings(**values)
 
 
-def test_real_handler_persists_database_and_transcript_artifact(
+def test_real_handler_persists_classified_json_and_markdown_artifacts(
     settings_values: dict[str, Any],
 ) -> None:
     settings = _real_settings(settings_values)
@@ -229,7 +229,8 @@ def test_real_handler_persists_database_and_transcript_artifact(
         diarization_adapter=StubDiarizationAdapter(),
     )
 
-    assert process_one_job(settings.database_path, handler, logging.getLogger("test"))
+    while process_one_job(settings.database_path, handler, logging.getLogger("test")):
+        pass
 
     with connect(settings.database_path) as connection:
         recording = connection.execute(
@@ -241,13 +242,16 @@ def test_real_handler_persists_database_and_transcript_artifact(
             FROM segments ORDER BY start_ms
             """
         ).fetchall()
-        artifact = connection.execute(
-            "SELECT relative_path, schema_version FROM artifacts WHERE kind = 'transcript_json'"
-        ).fetchone()
-        jobs = connection.execute("SELECT status FROM jobs").fetchall()
-    payload = json.loads((settings.transcript_root / artifact["relative_path"]).read_text())
+        artifacts = connection.execute(
+            "SELECT kind, relative_path, schema_version, revision FROM artifacts ORDER BY kind"
+        ).fetchall()
+        jobs = connection.execute("SELECT kind, status FROM jobs ORDER BY created_at").fetchall()
+    json_artifact = next(row for row in artifacts if row["kind"] == "transcript_json")
+    markdown_artifact = next(row for row in artifacts if row["kind"] == "transcript_markdown")
+    payload = json.loads((settings.transcript_root / json_artifact["relative_path"]).read_text())
+    markdown = (settings.document_root / markdown_artifact["relative_path"]).read_text()
 
-    assert dict(recording) == {"status": "SPEAKER_REVIEW", "needs_speaker_review": 1}
+    assert dict(recording) == {"status": "COMPLETED", "needs_speaker_review": 1}
     assert [row["assignment_status"] for row in segments] == [
         "assigned",
         "overlap",
@@ -258,14 +262,47 @@ def test_real_handler_persists_database_and_transcript_artifact(
         "SPEAKER_00",
         "SPEAKER_01",
     ]
-    assert artifact["schema_version"] == 2
+    assert json_artifact["schema_version"] == 2
+    assert markdown_artifact["schema_version"] == 1
+    assert {row["revision"] for row in artifacts} == {1}
     assert payload["schema_version"] == 2
     assert payload["recording_id"] == registration.recording_id
     assert payload["model_fingerprints"]["diarization"]["model"].endswith("community-1")
-    assert [row["status"] for row in jobs] == ["succeeded"]
+    assert payload["classification"]["category"] == "회의"
+    assert "Revision: 1" in markdown
+    assert "SPEAKER_00" in markdown
+    assert [dict(row) for row in jobs] == [
+        {"kind": "transcribe", "status": "succeeded"},
+        {"kind": "classify", "status": "succeeded"},
+    ]
     assert source.read_bytes() == original
     assert transcription.path is not None and not transcription.path.exists()
     assert not process_one_job(settings.database_path, handler, logging.getLogger("test"))
+
+
+def test_real_handler_can_stop_at_speech_evaluation_gate(
+    settings_values: dict[str, Any],
+) -> None:
+    settings = _real_settings(settings_values)
+    source = settings.recording_input_dir / "complete.m4a"
+    shutil.copyfile(FIXTURE, source)
+    ingest_file(settings.database_path, source)
+    handler = RealSpeechPipelineHandler(
+        settings,
+        logging.getLogger("test"),
+        transcription_adapter=StubTranscriptionAdapter(),
+        alignment_adapter=StubAlignmentAdapter(),
+        diarization_adapter=StubDiarizationAdapter(),
+        continue_to_documents=False,
+    )
+
+    assert process_one_job(settings.database_path, handler, logging.getLogger("test"))
+
+    with connect(settings.database_path) as connection:
+        recording = connection.execute("SELECT status FROM recordings").fetchone()
+        jobs = connection.execute("SELECT kind FROM jobs").fetchall()
+    assert recording["status"] == "SPEAKER_REVIEW"
+    assert [row["kind"] for row in jobs] == ["transcribe"]
 
 
 def test_real_handler_records_sanitized_model_failure(settings_values: dict[str, Any]) -> None:
