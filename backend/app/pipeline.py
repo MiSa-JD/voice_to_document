@@ -248,6 +248,28 @@ class FakePipelineHandler:
     def _replace_segments(self, transcript: Transcript) -> None:
         with connect(self.settings.database_path) as connection:
             connection.execute("BEGIN IMMEDIATE")
+            timestamp = utc_now()
+            speaker_ids = {
+                speaker_id
+                for segment in transcript.segments
+                for speaker_id in (
+                    ([segment.local_speaker_id] if segment.local_speaker_id is not None else [])
+                    + segment.overlapping_speaker_ids
+                )
+            }
+            connection.executemany(
+                """
+                INSERT INTO recording_speakers(
+                    recording_id, local_speaker_id, speaker_source, revision,
+                    created_at, updated_at
+                ) VALUES (?, ?, 'unresolved', 1, ?, ?)
+                ON CONFLICT(recording_id, local_speaker_id) DO NOTHING
+                """,
+                [
+                    (str(transcript.recording_id), speaker_id, timestamp, timestamp)
+                    for speaker_id in sorted(speaker_ids)
+                ],
+            )
             connection.execute(
                 "DELETE FROM segments WHERE recording_id = ?", (str(transcript.recording_id),)
             )
