@@ -13,6 +13,7 @@ from app.db import check_database
 from app.log import configure_logging
 from app.media_api import create_media_router
 from app.recordings_api import ApiErrorBody, ApiErrorResponse, ApiProblem, create_recordings_router
+from app.speaker_review_api import create_speaker_review_router
 
 DatabaseProbe = Callable[[Path], None]
 
@@ -84,6 +85,7 @@ def create_app(
 
     application.include_router(create_recordings_router(config))
     application.include_router(create_media_router(config))
+    application.include_router(create_speaker_review_router(config.database_path))
 
     return application
 

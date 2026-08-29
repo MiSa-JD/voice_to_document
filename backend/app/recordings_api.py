@@ -68,6 +68,8 @@ class SegmentResponse(BaseModel):
     overlapping_speaker_ids: list[str]
     person_id: str | None
     speaker_name: str | None
+    speaker_source: Literal["manual", "auto", "unresolved"]
+    speaker_score: float | None
     text: str
     revision: int
 
@@ -176,9 +178,16 @@ def create_recordings_router(settings: Settings) -> APIRouter:
                 raise ApiProblem(404, "RECORDING_NOT_FOUND", "녹음을 찾을 수 없습니다.")
             segments = connection.execute(
                 """
-                SELECT id, start_ms, end_ms, local_speaker_id, assignment_status,
-                       overlapping_speaker_ids_json, person_id, speaker_name, text, revision
-                FROM segments WHERE recording_id = ? ORDER BY start_ms, end_ms, id
+                SELECT segments.id, segments.start_ms, segments.end_ms,
+                       segments.local_speaker_id, segments.assignment_status,
+                       segments.overlapping_speaker_ids_json, segments.person_id,
+                       COALESCE(persons.display_name, segments.speaker_name) AS speaker_name,
+                       segments.speaker_source, segments.speaker_score,
+                       segments.text, segments.revision
+                FROM segments
+                LEFT JOIN persons ON persons.id = segments.person_id
+                WHERE segments.recording_id = ?
+                ORDER BY segments.start_ms, segments.end_ms, segments.id
                 """,
                 (recording_id,),
             ).fetchall()
