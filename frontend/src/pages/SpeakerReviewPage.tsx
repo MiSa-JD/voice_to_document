@@ -27,6 +27,8 @@ type DraftTarget =
   | { kind: 'new'; displayName: string; label: string };
 
 type RevisionConflict = { currentRevision: number | null };
+type NewPersonContext =
+  { kind: 'speaker'; localSpeakerId: string } | { kind: 'draft' };
 
 export function SpeakerReviewPage() {
   const { id = '' } = useParams();
@@ -113,7 +115,14 @@ function SpeakerReview({
   const [confirming, setConfirming] = useState(false);
   const [savingDraft, setSavingDraft] = useState(false);
   const [conflict, setConflict] = useState<RevisionConflict | null>(null);
+  const [newPersonContext, setNewPersonContext] =
+    useState<NewPersonContext | null>(null);
+  const [newPersonName, setNewPersonName] = useState('');
+  const [newPersonError, setNewPersonError] = useState<string | null>(null);
+  const [creatingPerson, setCreatingPerson] = useState(false);
   const audioRef = useRef<HTMLAudioElement>(null);
+  const newPersonInputRef = useRef<HTMLInputElement>(null);
+  const newPersonTriggerRef = useRef<HTMLElement | null>(null);
   const recordingAudio = data.artifacts.find(
     (artifact) => artifact.kind === 'recording_audio',
   );
@@ -129,6 +138,10 @@ function SpeakerReview({
     return () => window.removeEventListener('beforeunload', warn);
   }, [hasDraft]);
 
+  useEffect(() => {
+    if (newPersonContext) newPersonInputRef.current?.focus();
+  }, [newPersonContext]);
+
   const seek = (milliseconds: number) => {
     if (!audioRef.current) return;
     audioRef.current.currentTime = milliseconds / 1000;
@@ -136,20 +149,9 @@ function SpeakerReview({
   };
 
   const assign = async (localSpeakerId: string, value: string) => {
-    let personId: string | null = value === UNKNOWN ? null : value;
+    const personId: string | null = value === UNKNOWN ? null : value;
     if (value === NEW_PERSON) {
-      const displayName = window.prompt('새 인물 이름을 입력하세요.');
-      if (!displayName?.trim()) return;
-      try {
-        personId = (await createPerson(displayName)).id;
-      } catch (error) {
-        setMessage(
-          error instanceof ApiError
-            ? error.message
-            : '인물을 만들지 못했습니다.',
-        );
-        return;
-      }
+      return;
     }
     setSavingSpeaker(localSpeakerId);
     setMessage(null);
@@ -176,6 +178,52 @@ function SpeakerReview({
     }
   };
 
+  const openNewPerson = (context: NewPersonContext, trigger: HTMLElement) => {
+    setConfirming(false);
+    setNewPersonContext(context);
+    setNewPersonName('');
+    setNewPersonError(null);
+    newPersonTriggerRef.current = trigger;
+  };
+
+  const closeNewPerson = () => {
+    const trigger = newPersonTriggerRef.current;
+    setNewPersonContext(null);
+    setNewPersonName('');
+    setNewPersonError(null);
+    window.setTimeout(() => trigger?.focus(), 0);
+  };
+
+  const submitNewPerson = async (event: React.FormEvent) => {
+    event.preventDefault();
+    const displayName = newPersonName.trim();
+    if (!displayName) {
+      setNewPersonError('인물 이름을 입력하세요.');
+      newPersonInputRef.current?.focus();
+      return;
+    }
+    if (!newPersonContext) return;
+    if (newPersonContext.kind === 'draft') {
+      setDraftTarget({ kind: 'new', displayName, label: displayName });
+      closeNewPerson();
+      return;
+    }
+    setCreatingPerson(true);
+    setNewPersonError(null);
+    try {
+      const person = await createPerson(displayName);
+      const speakerId = newPersonContext.localSpeakerId;
+      closeNewPerson();
+      await assign(speakerId, person.id);
+    } catch (error) {
+      setNewPersonError(
+        error instanceof ApiError ? error.message : '인물을 만들지 못했습니다.',
+      );
+    } finally {
+      setCreatingPerson(false);
+    }
+  };
+
   const selectTarget = (value: string) => {
     setConfirming(false);
     if (value === UNKNOWN) {
@@ -183,14 +231,6 @@ function SpeakerReview({
       return;
     }
     if (value === NEW_PERSON) {
-      const displayName = window.prompt('새 인물 이름을 입력하세요.');
-      if (displayName?.trim()) {
-        setDraftTarget({
-          kind: 'new',
-          displayName: displayName.trim(),
-          label: displayName.trim(),
-        });
-      }
       return;
     }
     const person = persons.find((item) => item.id === value);
@@ -281,7 +321,12 @@ function SpeakerReview({
       <section className="panel detail-section">
         <h2>원본 오디오</h2>
         {recordingAudio ? (
-          <audio ref={audioRef} controls src={mediaUrl(recordingAudio.id)}>
+          <audio
+            ref={audioRef}
+            controls
+            aria-label="녹음 전체 오디오"
+            src={mediaUrl(recordingAudio.id)}
+          >
             오디오 재생을 지원하지 않는 브라우저입니다.
           </audio>
         ) : (
@@ -324,6 +369,7 @@ function SpeakerReview({
                   className="speaker-select"
                   type="button"
                   aria-pressed={selectedSpeaker === speaker.local_speaker_id}
+                  aria-label={`${speaker.speaker_name ?? speaker.local_speaker_id}, ${speaker.segment_count}개 발화, ${selectedSpeaker === speaker.local_speaker_id ? '선택됨' : '선택 안 됨'}`}
                   onClick={() => setSelectedSpeaker(speaker.local_speaker_id)}
                 >
                   <span>
@@ -344,6 +390,7 @@ function SpeakerReview({
                 {speaker.representative_clip_artifact_id ? (
                   <audio
                     controls
+                    aria-label={`${speaker.local_speaker_id} 대표 클립`}
                     src={mediaUrl(speaker.representative_clip_artifact_id)}
                   >
                     대표 클립을 재생할 수 없습니다.
@@ -359,9 +406,22 @@ function SpeakerReview({
                     aria-label={`${speaker.local_speaker_id} 인물 연결`}
                     disabled={savingSpeaker !== null}
                     value={speaker.person_id ?? UNKNOWN}
-                    onChange={(event) =>
-                      void assign(speaker.local_speaker_id, event.target.value)
-                    }
+                    onChange={(event) => {
+                      if (event.target.value === NEW_PERSON) {
+                        openNewPerson(
+                          {
+                            kind: 'speaker',
+                            localSpeakerId: speaker.local_speaker_id,
+                          },
+                          event.currentTarget,
+                        );
+                      } else {
+                        void assign(
+                          speaker.local_speaker_id,
+                          event.target.value,
+                        );
+                      }
+                    }}
                   >
                     <option value={UNKNOWN}>알 수 없음</option>
                     {persons.map((person) => (
@@ -372,6 +432,19 @@ function SpeakerReview({
                     <option value={NEW_PERSON}>+ 새 인물</option>
                   </select>
                 </label>
+                {newPersonContext?.kind === 'speaker' &&
+                  newPersonContext.localSpeakerId ===
+                    speaker.local_speaker_id && (
+                    <NewPersonForm
+                      inputRef={newPersonInputRef}
+                      value={newPersonName}
+                      error={newPersonError}
+                      busy={creatingPerson}
+                      onChange={setNewPersonName}
+                      onSubmit={submitNewPerson}
+                      onCancel={closeNewPerson}
+                    />
+                  )}
                 {savingSpeaker === speaker.local_speaker_id && (
                   <small role="status">저장 중…</small>
                 )}
@@ -398,7 +471,13 @@ function SpeakerReview({
                           ? NEW_PERSON
                           : ''
                   }
-                  onChange={(event) => selectTarget(event.target.value)}
+                  onChange={(event) => {
+                    if (event.target.value === NEW_PERSON) {
+                      openNewPerson({ kind: 'draft' }, event.currentTarget);
+                    } else {
+                      selectTarget(event.target.value);
+                    }
+                  }}
                 >
                   <option value="">인물 선택</option>
                   <option value={UNKNOWN}>알 수 없음</option>
@@ -410,6 +489,17 @@ function SpeakerReview({
                   <option value={NEW_PERSON}>+ 새 인물</option>
                 </select>
               </label>
+              {newPersonContext?.kind === 'draft' && (
+                <NewPersonForm
+                  inputRef={newPersonInputRef}
+                  value={newPersonName}
+                  error={newPersonError}
+                  busy={creatingPerson}
+                  onChange={setNewPersonName}
+                  onSubmit={submitNewPerson}
+                  onCancel={closeNewPerson}
+                />
+              )}
               <button
                 type="button"
                 disabled={!draftTarget || selectedSegments.size === 0}
@@ -497,6 +587,7 @@ function SpeakerReview({
                   <button
                     className="timestamp"
                     type="button"
+                    aria-label={`${formatDuration(segment.start_ms)}부터 오디오 재생`}
                     onClick={() => seek(segment.start_ms)}
                   >
                     {formatDuration(segment.start_ms)}
@@ -516,6 +607,62 @@ function SpeakerReview({
         </section>
       </section>
     </>
+  );
+}
+
+function NewPersonForm({
+  inputRef,
+  value,
+  error,
+  busy,
+  onChange,
+  onSubmit,
+  onCancel,
+}: {
+  inputRef: React.RefObject<HTMLInputElement | null>;
+  value: string;
+  error: string | null;
+  busy: boolean;
+  onChange: (value: string) => void;
+  onSubmit: (event: React.FormEvent) => void;
+  onCancel: () => void;
+}) {
+  const errorId = 'new-person-name-error';
+  return (
+    <form className="inline-person-form" onSubmit={onSubmit}>
+      <label htmlFor="new-person-name">새 인물 이름</label>
+      <p id="new-person-description" className="muted">
+        transcript에 표시할 이름을 입력하세요.
+      </p>
+      <input
+        ref={inputRef}
+        id="new-person-name"
+        value={value}
+        maxLength={100}
+        disabled={busy}
+        aria-describedby={`new-person-description${error ? ` ${errorId}` : ''}`}
+        aria-invalid={Boolean(error)}
+        onChange={(event) => onChange(event.target.value)}
+      />
+      {error && (
+        <p id={errorId} className="inline-error" role="alert">
+          {error}
+        </p>
+      )}
+      <div className="inline-person-form__actions">
+        <button type="submit" disabled={busy}>
+          {busy ? '만드는 중…' : '인물 만들기'}
+        </button>
+        <button
+          className="button-secondary"
+          type="button"
+          disabled={busy}
+          onClick={onCancel}
+        >
+          취소
+        </button>
+      </div>
+    </form>
   );
 }
 

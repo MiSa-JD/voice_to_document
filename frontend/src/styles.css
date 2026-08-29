@@ -142,6 +142,28 @@ h3 {
 .inline-error {
   color: var(--danger);
 }
+.inline-person-form {
+  display: grid;
+  gap: 8px;
+  padding: 16px;
+  border: 1px solid var(--outline);
+  border-radius: var(--radius-md);
+  background: var(--surface-low);
+}
+.inline-person-form p {
+  margin: 0;
+}
+.inline-person-form input {
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 1px solid var(--outline);
+  border-radius: var(--radius-sm);
+}
+.inline-person-form__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
 .conflict-notice {
   margin: 16px 0;
   padding: 20px;
