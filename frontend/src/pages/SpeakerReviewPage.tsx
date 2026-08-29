@@ -4,6 +4,7 @@ import { Link, useParams } from 'react-router-dom';
 import { ApiError } from '../api/client';
 import {
   assignRecordingSpeaker,
+  assignSegmentSpeakers,
   createPerson,
   getPersons,
   getRecording,
@@ -19,6 +20,11 @@ type ViewState =
 
 const UNKNOWN = '__unknown__';
 const NEW_PERSON = '__new__';
+
+type DraftTarget =
+  | { kind: 'person'; personId: string; label: string }
+  | { kind: 'unknown'; label: string }
+  | { kind: 'new'; displayName: string; label: string };
 
 export function SpeakerReviewPage() {
   const { id = '' } = useParams();
@@ -51,9 +57,6 @@ export function SpeakerReviewPage() {
 
   return (
     <main className="shell shell--wide">
-      <Link className="back-link" to={`/recordings/${id}`}>
-        ← 녹음 상세
-      </Link>
       <p className="eyebrow">SPEAKER REVIEW</p>
       <h1>화자 검토</h1>
 
@@ -101,10 +104,27 @@ function SpeakerReview({
   );
   const [savingSpeaker, setSavingSpeaker] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [selectedSegments, setSelectedSegments] = useState<Set<string>>(
+    new Set(),
+  );
+  const [draftTarget, setDraftTarget] = useState<DraftTarget | null>(null);
+  const [confirming, setConfirming] = useState(false);
+  const [savingDraft, setSavingDraft] = useState(false);
   const audioRef = useRef<HTMLAudioElement>(null);
   const recordingAudio = data.artifacts.find(
     (artifact) => artifact.kind === 'recording_audio',
   );
+  const hasDraft = selectedSegments.size > 0 || draftTarget !== null;
+
+  useEffect(() => {
+    if (!hasDraft) return;
+    const warn = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [hasDraft]);
 
   const seek = (milliseconds: number) => {
     if (!audioRef.current) return;
@@ -149,8 +169,86 @@ function SpeakerReview({
     }
   };
 
+  const selectTarget = (value: string) => {
+    setConfirming(false);
+    if (value === UNKNOWN) {
+      setDraftTarget({ kind: 'unknown', label: '알 수 없음' });
+      return;
+    }
+    if (value === NEW_PERSON) {
+      const displayName = window.prompt('새 인물 이름을 입력하세요.');
+      if (displayName?.trim()) {
+        setDraftTarget({
+          kind: 'new',
+          displayName: displayName.trim(),
+          label: displayName.trim(),
+        });
+      }
+      return;
+    }
+    const person = persons.find((item) => item.id === value);
+    if (person)
+      setDraftTarget({
+        kind: 'person',
+        personId: person.id,
+        label: person.display_name,
+      });
+  };
+
+  const saveDraft = async () => {
+    if (!draftTarget || selectedSegments.size === 0) return;
+    setSavingDraft(true);
+    setMessage(null);
+    try {
+      let personId: string | null = null;
+      if (draftTarget.kind === 'person') personId = draftTarget.personId;
+      if (draftTarget.kind === 'new')
+        personId = (await createPerson(draftTarget.displayName)).id;
+      await assignSegmentSpeakers(
+        data.recording.id,
+        [...selectedSegments],
+        personId,
+        data.recording.revision,
+      );
+      setSelectedSegments(new Set());
+      setDraftTarget(null);
+      setConfirming(false);
+      onReload();
+    } catch (error) {
+      setMessage(
+        error instanceof ApiError
+          ? error.message
+          : '발화 변경을 저장하지 못했습니다.',
+      );
+    } finally {
+      setSavingDraft(false);
+    }
+  };
+
+  const discardDraft = () => {
+    setSelectedSegments(new Set());
+    setDraftTarget(null);
+    setConfirming(false);
+  };
+
+  const leaveReview = (event: React.MouseEvent<HTMLAnchorElement>) => {
+    if (
+      hasDraft &&
+      !window.confirm('저장하지 않은 발화 변경을 폐기하고 이동할까요?')
+    ) {
+      event.preventDefault();
+    }
+  };
+
   return (
     <>
+      <Link
+        className="back-link"
+        to={`/recordings/${data.recording.id}`}
+        onClick={leaveReview}
+      >
+        ← 녹음 상세
+      </Link>
       <p className="intro">
         {data.recording.original_name}의 음성을 듣고 인물을 연결합니다.
       </p>
@@ -245,6 +343,91 @@ function SpeakerReview({
 
         <section className="panel transcript-panel">
           <h2>Transcript</h2>
+          {data.segments.length > 0 && (
+            <div className="draft-toolbar">
+              <strong>{selectedSegments.size}개 발화 선택</strong>
+              <label>
+                변경할 인물
+                <select
+                  aria-label="선택 발화 변경 인물"
+                  value={
+                    draftTarget?.kind === 'person'
+                      ? draftTarget.personId
+                      : draftTarget?.kind === 'unknown'
+                        ? UNKNOWN
+                        : draftTarget?.kind === 'new'
+                          ? NEW_PERSON
+                          : ''
+                  }
+                  onChange={(event) => selectTarget(event.target.value)}
+                >
+                  <option value="">인물 선택</option>
+                  <option value={UNKNOWN}>알 수 없음</option>
+                  {persons.map((person) => (
+                    <option key={person.id} value={person.id}>
+                      {person.display_name}
+                    </option>
+                  ))}
+                  <option value={NEW_PERSON}>+ 새 인물</option>
+                </select>
+              </label>
+              <button
+                type="button"
+                disabled={!draftTarget || selectedSegments.size === 0}
+                onClick={() => setConfirming(true)}
+              >
+                변경 확인
+              </button>
+              {hasDraft && (
+                <button
+                  className="button-secondary"
+                  type="button"
+                  onClick={discardDraft}
+                >
+                  변경 폐기
+                </button>
+              )}
+            </div>
+          )}
+          {confirming && draftTarget && (
+            <section
+              className="change-confirmation"
+              aria-label="발화 변경 확인"
+            >
+              <h3>저장 전 변경 확인</h3>
+              <p>
+                <strong>{selectedSegments.size}개 발화</strong>를{' '}
+                <strong>{draftTarget.label}</strong>(으)로 변경합니다.
+              </p>
+              <ul>
+                {data.segments
+                  .filter((segment) => selectedSegments.has(segment.id))
+                  .map((segment) => (
+                    <li key={segment.id}>
+                      {segment.speaker_name ??
+                        segment.local_speaker_id ??
+                        '화자 미배정'}{' '}
+                      → {draftTarget.label}
+                    </li>
+                  ))}
+              </ul>
+              <button
+                type="button"
+                disabled={savingDraft}
+                onClick={() => void saveDraft()}
+              >
+                {savingDraft ? '저장 중…' : '일괄 저장'}
+              </button>
+              <button
+                className="button-secondary"
+                type="button"
+                disabled={savingDraft}
+                onClick={() => setConfirming(false)}
+              >
+                계속 수정
+              </button>
+            </section>
+          )}
           {data.segments.length === 0 ? (
             <p className="muted">아직 transcript가 없습니다.</p>
           ) : (
@@ -258,6 +441,20 @@ function SpeakerReview({
                   }
                   key={segment.id}
                 >
+                  <input
+                    type="checkbox"
+                    aria-label={`${formatDuration(segment.start_ms)} 발화 선택`}
+                    checked={selectedSegments.has(segment.id)}
+                    onChange={(event) => {
+                      setConfirming(false);
+                      setSelectedSegments((current) => {
+                        const next = new Set(current);
+                        if (event.target.checked) next.add(segment.id);
+                        else next.delete(segment.id);
+                        return next;
+                      });
+                    }}
+                  />
                   <button
                     className="timestamp"
                     type="button"

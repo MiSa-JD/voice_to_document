@@ -236,3 +236,111 @@ test('로딩 실패와 빈 화자 상태를 구분한다', async () => {
     await screen.findByText('검토할 화자가 없습니다.'),
   ).toBeInTheDocument();
 });
+
+test('선택 발화를 확인한 뒤 한 번의 batch 요청으로 저장한다', async () => {
+  const fetchMock = vi
+    .fn()
+    .mockImplementation((path: string, init?: RequestInit) => {
+      if (path === '/api/persons') {
+        return Promise.resolve(
+          response(200, {
+            items: [
+              {
+                id: 'person-id',
+                display_name: '김민지',
+                revision: 1,
+                created_at: 'now',
+                updated_at: 'now',
+              },
+            ],
+            total: 1,
+          }),
+        );
+      }
+      if (path === '/api/segments/speakers' && init?.method === 'PATCH') {
+        return Promise.resolve(
+          response(200, {
+            recording_id: 'recording-id',
+            recording_revision: 4,
+            person_id: 'person-id',
+            speaker_name: '김민지',
+            updated_segment_count: 2,
+          }),
+        );
+      }
+      return Promise.resolve(response(200, detail));
+    });
+  vi.stubGlobal('fetch', fetchMock);
+  renderPage();
+
+  await userEvent.click(
+    await screen.findByRole('checkbox', { name: '00:01 발화 선택' }),
+  );
+  await userEvent.click(
+    screen.getByRole('checkbox', { name: '00:04 발화 선택' }),
+  );
+  await userEvent.selectOptions(
+    screen.getByRole('combobox', { name: '선택 발화 변경 인물' }),
+    'person-id',
+  );
+  expect(
+    fetchMock.mock.calls.some(([path]) => path === '/api/segments/speakers'),
+  ).toBe(false);
+  await userEvent.click(screen.getByRole('button', { name: '변경 확인' }));
+
+  const confirmation = screen.getByRole('region', { name: '발화 변경 확인' });
+  expect(confirmation).toHaveTextContent('2개 발화');
+  expect(confirmation).toHaveTextContent('SPEAKER_00 → 김민지');
+  await userEvent.click(screen.getByRole('button', { name: '일괄 저장' }));
+
+  await waitFor(() =>
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/segments/speakers',
+      expect.objectContaining({
+        method: 'PATCH',
+        body: JSON.stringify({
+          recording_id: 'recording-id',
+          segment_ids: ['one', 'two'],
+          person_id: 'person-id',
+          expected_revision: 3,
+        }),
+      }),
+    ),
+  );
+  expect(
+    fetchMock.mock.calls.filter(([path]) => path === '/api/segments/speakers'),
+  ).toHaveLength(1);
+});
+
+test('draft 이탈을 경고하고 명시적 폐기 전에는 서버를 변경하지 않는다', async () => {
+  const fetchMock = vi
+    .fn()
+    .mockImplementation((path: string) =>
+      Promise.resolve(
+        path === '/api/persons'
+          ? response(200, { items: [], total: 0 })
+          : response(200, detail),
+      ),
+    );
+  const confirm = vi.fn().mockReturnValue(false);
+  vi.stubGlobal('fetch', fetchMock);
+  vi.stubGlobal('confirm', confirm);
+  renderPage();
+
+  await userEvent.click(
+    await screen.findByRole('checkbox', { name: '00:01 발화 선택' }),
+  );
+  const unload = new Event('beforeunload', { cancelable: true });
+  window.dispatchEvent(unload);
+  expect(unload.defaultPrevented).toBe(true);
+  await userEvent.click(screen.getByRole('link', { name: '← 녹음 상세' }));
+  expect(confirm).toHaveBeenCalled();
+  expect(
+    fetchMock.mock.calls.some(
+      ([, init]) => (init as RequestInit | undefined)?.method === 'PATCH',
+    ),
+  ).toBe(false);
+
+  await userEvent.click(screen.getByRole('button', { name: '변경 폐기' }));
+  expect(screen.getByText('0개 발화 선택')).toBeInTheDocument();
+});

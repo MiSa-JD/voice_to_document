@@ -286,7 +286,7 @@ audio {
 }
 .transcript li {
   display: grid;
-  grid-template-columns: 5rem minmax(0, 1fr);
+  grid-template-columns: auto 5rem minmax(0, 1fr);
   gap: 16px;
   padding: 16px;
   border: 1px solid transparent;
@@ -402,6 +402,49 @@ audio {
   max-height: 72rem;
   overflow: auto;
 }
+.draft-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: end;
+  margin-bottom: 16px;
+  padding: 16px;
+  border-radius: var(--radius-md);
+  background: var(--amber-soft);
+}
+.draft-toolbar label {
+  display: grid;
+  gap: 4px;
+}
+.draft-toolbar select {
+  min-height: 44px;
+  padding: 8px;
+  border: 1px solid var(--outline);
+  border-radius: var(--radius-md);
+  background: #fff;
+}
+.button-secondary {
+  color: var(--earth);
+  background: #fff;
+  border-color: var(--outline);
+}
+.button-secondary:hover {
+  color: #fff;
+  background: var(--earth);
+}
+.change-confirmation {
+  margin-bottom: 16px;
+  padding: 16px;
+  border: 2px solid var(--amber);
+  border-radius: var(--radius-md);
+  background: var(--surface-lowest);
+}
+.change-confirmation h3 {
+  margin-top: 0;
+}
+.change-confirmation button + button {
+  margin-left: 8px;
+}
 @media (max-width: 760px) {
   .status-grid,
   .summary-grid {
@@ -425,6 +468,6 @@ audio {
     flex-direction: column;
   }
   .transcript li {
-    grid-template-columns: 1fr;
+    grid-template-columns: auto 4rem minmax(0, 1fr);
   }
 }
