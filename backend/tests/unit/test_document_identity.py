@@ -24,7 +24,7 @@ def test_document_title_normalizes_truncates_and_removes_reserved_characters() -
         normalize_document_title("  안녕\n\t하세요  반갑습니다 ", None) == "안녕 하세요 반갑습니다"
     )
     assert normalize_document_title("가" * 21, None) == "가" * 20
-    assert normalize_document_title(" .<회의>:/\\|?*\x00. ", None) == "회의"
+    assert normalize_document_title(" .<회의>:/\\|?*\x00\u0085. ", None) == "회의"
 
 
 def test_document_title_falls_back_to_category_then_recording() -> None:

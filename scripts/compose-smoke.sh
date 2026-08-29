@@ -3,6 +3,7 @@ set -eu
 
 smoke_parent=${TMPDIR:-/tmp}
 smoke_data_root=$(mktemp -d "$smoke_parent/voice-to-document-smoke.XXXXXX")
+document_host_dir="$smoke_data_root/document output"
 export COMPOSE_PROJECT_NAME="voice-to-document-smoke-$$"
 
 cleanup() {
@@ -17,13 +18,14 @@ mkdir -p \
   "$smoke_data_root/inbox" \
   "$smoke_data_root/transcripts" \
   "$smoke_data_root/speakers" \
-  "$smoke_data_root/documents" \
+  "$document_host_dir" \
   "$smoke_data_root/app"
 
 export DATA_ROOT="$smoke_data_root"
 export E2E_DATA_ROOT="$smoke_data_root"
 export RECORDING_INPUT_HOST_DIR="$smoke_data_root/inbox"
 export TRANSCRIPT_HOST_DIR="$smoke_data_root/transcripts"
+export DOCUMENT_HOST_DIR="$document_host_dir"
 export RECORDING_INPUT_DIR=/data/inbox
 export TRANSCRIPT_ROOT=/data/transcripts
 export SPEAKER_ROOT=/data/speakers
@@ -55,5 +57,11 @@ until curl --fail --silent --show-error "$E2E_BASE_URL/health/live" >/dev/null; 
   sleep 1
 done
 npm --prefix frontend run test:e2e -- --grep 'pipeline flow|브라우저에서'
+markdown_count=$(find "$document_host_dir" -mindepth 1 -maxdepth 1 -type f -name '*.md' | wc -l)
+test "$markdown_count" -eq 1
+test -z "$(find "$document_host_dir" -mindepth 1 -type d -print -quit)"
+markdown_path=$(find "$document_host_dir" -mindepth 1 -maxdepth 1 -type f -name '*.md' -print -quit)
+markdown_digest=$(sha256sum "$markdown_path" | awk '{print $1}')
 docker compose restart worker
 npm --prefix frontend run test:e2e -- --grep 'restart preservation'
+test "$(sha256sum "$markdown_path" | awk '{print $1}')" = "$markdown_digest"

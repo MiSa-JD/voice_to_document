@@ -167,7 +167,10 @@ def test_version_three_recordings_receive_stable_ordered_sequences(tmp_path: Pat
 
     with connect(database_path) as connection:
         rows = connection.execute(
-            "SELECT id, document_sequence, document_title FROM recordings ORDER BY document_sequence"
+            """
+            SELECT id, document_sequence, document_title
+            FROM recordings ORDER BY document_sequence
+            """
         ).fetchall()
         counter = connection.execute(
             "SELECT last_value FROM document_sequence_counter WHERE singleton = 1"

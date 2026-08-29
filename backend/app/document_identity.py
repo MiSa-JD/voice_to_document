@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -26,8 +27,7 @@ def normalize_document_title(first_utterance: str | None, category: str | None) 
         character
         for character in normalized
         if character not in _FORBIDDEN_FILENAME_CHARACTERS
-        and ord(character) >= 32
-        and ord(character) != 127
+        and unicodedata.category(character) != "Cc"
     ).strip(" .")
     if cleaned:
         return cleaned
