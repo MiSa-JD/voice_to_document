@@ -397,6 +397,13 @@
             "title": "Segments",
             "type": "array"
           },
+          "speakers": {
+            "items": {
+              "$ref": "#/components/schemas/RecordingSpeakerResponse"
+            },
+            "title": "Speakers",
+            "type": "array"
+          },
           "summary": {
             "anyOf": [
               {
@@ -410,6 +417,7 @@
         },
         "required": [
           "recording",
+          "speakers",
           "segments",
           "artifacts",
           "jobs",
@@ -536,6 +544,134 @@
           "status_counts"
         ],
         "title": "RecordingListResponse",
+        "type": "object"
+      },
+      "RecordingSpeakerResponse": {
+        "properties": {
+          "clip_error_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Clip Error Code"
+          },
+          "clip_status": {
+            "enum": [
+              "pending",
+              "ready",
+              "insufficient",
+              "failed"
+            ],
+            "title": "Clip Status",
+            "type": "string"
+          },
+          "duration_ms": {
+            "title": "Duration Ms",
+            "type": "integer"
+          },
+          "local_speaker_id": {
+            "title": "Local Speaker Id",
+            "type": "string"
+          },
+          "person_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Person Id"
+          },
+          "representative_clip_artifact_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Representative Clip Artifact Id"
+          },
+          "representative_clip_end_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Representative Clip End Ms"
+          },
+          "representative_clip_start_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Representative Clip Start Ms"
+          },
+          "segment_count": {
+            "title": "Segment Count",
+            "type": "integer"
+          },
+          "speaker_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Speaker Name"
+          },
+          "speaker_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Speaker Score"
+          },
+          "speaker_source": {
+            "enum": [
+              "manual",
+              "auto",
+              "unresolved"
+            ],
+            "title": "Speaker Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "local_speaker_id",
+          "person_id",
+          "speaker_name",
+          "speaker_source",
+          "speaker_score",
+          "segment_count",
+          "duration_ms",
+          "clip_status",
+          "clip_error_code",
+          "representative_clip_artifact_id",
+          "representative_clip_start_ms",
+          "representative_clip_end_ms"
+        ],
+        "title": "RecordingSpeakerResponse",
         "type": "object"
       },
       "RecordingStatus": {

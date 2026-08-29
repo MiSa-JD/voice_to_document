@@ -1239,7 +1239,7 @@ Compose를 시작하고 fixture를 입력 폴더에 넣은 뒤 대시보드에�
 | R2 | `DONE` | [M0.5 Compose 검증](progress/018_r2_07_compose_completion.md), [재검증](progress/029_roadmap_gate_verification.md) | - |
 | R3 | `DONE` | [M1 구현 검증](progress/028_r3_m1_verification.md), [재검증](progress/029_roadmap_gate_verification.md) | - |
 | R4 | `DONE` | [실제 모델 평가](progress/040_r4_08_fixed_audio_evaluation.md), [M2 검증](progress/041_r4_m2_verification.md) | - |
-| R5 | `NOT STARTED` | - | - |
+| R5 | `IN PROGRESS` | [R5-05 화자 검토 화면](progress/056_r5_05_speaker_review_ui.md) | R5-06~R5-09 |
 | R6 | `NOT STARTED` | - | 수동 확정 음성 표본, R5 |
 | R7 | `NOT STARTED` | - | R5, LLM 정책 |
 | R8 | `NOT STARTED` | - | R7, LLM 정책 |

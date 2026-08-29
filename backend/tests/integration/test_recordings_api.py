@@ -57,6 +57,16 @@ def test_completed_recording_list_and_detail(settings_values: dict[str, Any]) ->
         "assigned",
     ]
     assert all(segment["overlapping_speaker_ids"] == [] for segment in payload["segments"])
+    assert [speaker["local_speaker_id"] for speaker in payload["speakers"]] == [
+        "SPEAKER_00",
+        "SPEAKER_01",
+    ]
+    assert [speaker["segment_count"] for speaker in payload["speakers"]] == [1, 1]
+    assert [speaker["duration_ms"] for speaker in payload["speakers"]] == [900, 900]
+    assert all(speaker["speaker_source"] == "unresolved" for speaker in payload["speakers"])
+    assert all(
+        speaker["representative_clip_artifact_id"] is None for speaker in payload["speakers"]
+    )
     assert {artifact["kind"] for artifact in payload["artifacts"]} == {
         "recording_audio",
         "transcript_json",
