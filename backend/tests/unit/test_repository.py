@@ -20,12 +20,16 @@ def test_registration_creates_recording_and_job_together(tmp_path: Path) -> None
     with connect(database_path) as connection:
         recording = connection.execute("SELECT * FROM recordings").fetchone()
         job = connection.execute("SELECT * FROM jobs").fetchone()
+        artifact = connection.execute("SELECT * FROM artifacts").fetchone()
     assert recording["id"] == result.recording_id
     assert recording["status"] == "DISCOVERED"
     assert recording["original_name"] == "새 녹음.m4a"
     assert job["recording_id"] == result.recording_id
     assert job["kind"] == "transcribe"
     assert job["status"] == "queued"
+    assert artifact["kind"] == "recording_audio"
+    assert artifact["relative_path"] == "새 녹음.m4a"
+    assert artifact["content_sha256"] == "a" * 64
 
 
 @pytest.mark.parametrize("iteration", range(10))
@@ -51,6 +55,7 @@ def test_same_hash_concurrently_creates_one_recording_and_job(
     with connect(database_path) as connection:
         assert connection.execute("SELECT COUNT(*) FROM recordings").fetchone()[0] == 1
         assert connection.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 1
+        assert connection.execute("SELECT COUNT(*) FROM artifacts").fetchone()[0] == 1
         row = connection.execute("SELECT original_name, source_path FROM recordings").fetchone()
     assert row["original_name"] in {"first.m4a", "second.m4a"}
     assert Path(row["source_path"]).name in {"first.m4a", "second.m4a"}
@@ -77,3 +82,34 @@ def test_job_insert_failure_rolls_back_recording(tmp_path: Path) -> None:
     with connect(database_path) as connection:
         assert connection.execute("SELECT COUNT(*) FROM recordings").fetchone()[0] == 0
         assert connection.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 0
+        assert connection.execute("SELECT COUNT(*) FROM artifacts").fetchone()[0] == 0
+
+
+def test_duplicate_source_update_preserves_recording_audio_identity(tmp_path: Path) -> None:
+    root = tmp_path / "inbox"
+    first_dir = root / "first"
+    second_dir = root / "second"
+    first_dir.mkdir(parents=True)
+    second_dir.mkdir()
+    first = first_dir / "recording.m4a"
+    second = second_dir / "moved.m4a"
+    first.write_bytes(b"audio")
+    second.write_bytes(b"audio")
+    database_path = tmp_path / "app.db"
+
+    original = register_recording(database_path, first, "e" * 64, 5, 1000, recording_root=root)
+    with connect(database_path) as connection:
+        first_artifact = connection.execute(
+            "SELECT id, relative_path FROM artifacts WHERE kind = 'recording_audio'"
+        ).fetchone()
+    duplicate = register_recording(database_path, second, "e" * 64, 5, 1000, recording_root=root)
+
+    with connect(database_path) as connection:
+        second_artifact = connection.execute(
+            "SELECT id, relative_path FROM artifacts WHERE kind = 'recording_audio'"
+        ).fetchone()
+    assert duplicate.recording_id == original.recording_id
+    assert duplicate.created is False
+    assert first_artifact["id"] == second_artifact["id"]
+    assert first_artifact["relative_path"] == "first/recording.m4a"
+    assert second_artifact["relative_path"] == "second/moved.m4a"

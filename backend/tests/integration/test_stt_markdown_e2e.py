@@ -55,13 +55,14 @@ def test_file_detection_to_revision_matched_markdown_survives_restart(
         ).fetchall()
     assert dict(recording) == {"status": "COMPLETED", "revision": 1}
     assert [row["kind"] for row in artifacts] == [
+        "recording_audio",
         "transcript_json",
         "transcript_markdown",
     ]
     assert {row["revision"] for row in artifacts} == {1}
 
-    json_row = artifacts[0]
-    markdown_row = artifacts[1]
+    json_row = next(row for row in artifacts if row["kind"] == "transcript_json")
+    markdown_row = next(row for row in artifacts if row["kind"] == "transcript_markdown")
     assert Path(markdown_row["relative_path"]).parent == Path(".")
     assert markdown_row["relative_path"].startswith("0001_")
     assert markdown_row["relative_path"].endswith(".md")

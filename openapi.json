@@ -90,10 +90,6 @@
             "title": "Kind",
             "type": "string"
           },
-          "relative_path": {
-            "title": "Relative Path",
-            "type": "string"
-          },
           "revision": {
             "title": "Revision",
             "type": "integer"
@@ -106,7 +102,6 @@
         "required": [
           "id",
           "kind",
-          "relative_path",
           "content_sha256",
           "schema_version",
           "revision",
@@ -565,6 +560,77 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/media/{artifact_id}": {
+      "get": {
+        "operationId": "get_media_api_media__artifact_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "artifact_id",
+            "required": true,
+            "schema": {
+              "title": "Artifact Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Range",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Range"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "416": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Requested Range Not Satisfiable"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Media",
+        "tags": [
+          "media"
+        ]
+      }
+    },
     "/api/recordings": {
       "get": {
         "operationId": "list_recordings_api_recordings_get",

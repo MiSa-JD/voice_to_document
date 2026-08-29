@@ -58,6 +58,7 @@ def test_completed_recording_list_and_detail(settings_values: dict[str, Any]) ->
     ]
     assert all(segment["overlapping_speaker_ids"] == [] for segment in payload["segments"])
     assert {artifact["kind"] for artifact in payload["artifacts"]} == {
+        "recording_audio",
         "transcript_json",
         "transcript_markdown",
     }
@@ -65,6 +66,7 @@ def test_completed_recording_list_and_detail(settings_values: dict[str, Any]) ->
     assert len(payload["jobs"]) == 2
     assert payload["summary"] is None
     assert "source_path" not in detail.text
+    assert "relative_path" not in detail.text
 
 
 def test_recording_api_uses_common_errors(settings_values: dict[str, Any]) -> None:

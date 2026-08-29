@@ -75,7 +75,6 @@ class SegmentResponse(BaseModel):
 class ArtifactResponse(BaseModel):
     id: str
     kind: str
-    relative_path: str
     content_sha256: str
     schema_version: int
     revision: int
