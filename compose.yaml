@@ -28,7 +28,7 @@ x-backend-volumes: &backend-read-volumes
   - ${RECORDING_INPUT_HOST_DIR:-${DATA_ROOT:-./runtime}/inbox}:${RECORDING_INPUT_DIR:-/data/inbox}:ro
   - ${TRANSCRIPT_HOST_DIR:-${DATA_ROOT:-./runtime}/transcripts}:${TRANSCRIPT_ROOT:-/data/transcripts}:ro
   - ${DATA_ROOT:-./runtime}/speakers:${SPEAKER_ROOT:-/data/speakers}:ro
-  - ${DATA_ROOT:-./runtime}/documents:${DOCUMENT_ROOT:-${SUMMARY_ROOT:-/data/documents}}:ro
+  - ${DOCUMENT_HOST_DIR:-${DATA_ROOT:-./runtime}/documents}:${DOCUMENT_ROOT:-${SUMMARY_ROOT:-/data/documents}}:ro
   - ${DATA_ROOT:-./runtime}/app:${APP_DATA_DIR:-/data/app}
 
 services:
@@ -65,7 +65,7 @@ services:
       - ${RECORDING_INPUT_HOST_DIR:-${DATA_ROOT:-./runtime}/inbox}:${RECORDING_INPUT_DIR:-/data/inbox}:ro
       - ${TRANSCRIPT_HOST_DIR:-${DATA_ROOT:-./runtime}/transcripts}:${TRANSCRIPT_ROOT:-/data/transcripts}
       - ${DATA_ROOT:-./runtime}/speakers:${SPEAKER_ROOT:-/data/speakers}
-      - ${DATA_ROOT:-./runtime}/documents:${DOCUMENT_ROOT:-${SUMMARY_ROOT:-/data/documents}}
+      - ${DOCUMENT_HOST_DIR:-${DATA_ROOT:-./runtime}/documents}:${DOCUMENT_ROOT:-${SUMMARY_ROOT:-/data/documents}}
       - ${DATA_ROOT:-./runtime}/app:${APP_DATA_DIR:-/data/app}
     depends_on:
       api:

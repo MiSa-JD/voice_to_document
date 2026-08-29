@@ -87,18 +87,21 @@ Linux 호스트의 사용자 ID가 기본 `1000:1000`과 다르면 `APP_RUN_UID=
 내부의 입력·transcript·speaker·summary·app 경로도 `.env`에서 관리하지만, 서로 겹치지 않는
 절대 경로여야 합니다.
 
-입력 폴더와 transcript를 서로 다른 호스트 위치에 두려면 컨테이너 경로는 그대로 두고 다음
-호스트 경로만 설정합니다.
+입력 폴더, 내부 transcript JSON, 사람이 읽는 Markdown을 서로 다른 호스트 위치에 두려면
+컨테이너 경로는 그대로 두고 다음 호스트 경로만 설정합니다. `.env`에서 공백이 포함된 경로는
+backslash로 escape하지 않고 값 전체를 작은따옴표로 감쌉니다.
 
 ```dotenv
 RECORDING_INPUT_HOST_DIR=/mnt/syncthing/recordings
 TRANSCRIPT_HOST_DIR=/mnt/storage/transcripts
+DOCUMENT_HOST_DIR='/mnt/Obsidian/My Vault/3. Resource/vtd'
 ```
 
-두 변수를 비워 두면 각각 `${DATA_ROOT}/inbox`, `${DATA_ROOT}/transcripts`를 사용합니다. 호스트
-디렉터리는 Compose 실행 전에 만들고, transcript 디렉터리는 `APP_RUN_UID:APP_RUN_GID`가 쓸 수
-있어야 합니다. `RECORDING_INPUT_DIR=/data/inbox`와 `TRANSCRIPT_ROOT=/data/transcripts`는
-컨테이너 내부 경로이므로 일반적으로 변경하지 않습니다.
+세 변수를 비워 두면 각각 `${DATA_ROOT}/inbox`, `${DATA_ROOT}/transcripts`,
+`${DATA_ROOT}/documents`를 사용합니다. 호스트 디렉터리는 Compose 실행 전에 만들고, transcript와
+document 디렉터리는 `APP_RUN_UID:APP_RUN_GID`가 쓸 수 있어야 합니다.
+`RECORDING_INPUT_DIR=/data/inbox`, `TRANSCRIPT_ROOT=/data/transcripts`,
+`DOCUMENT_ROOT=/data/documents`는 컨테이너 내부 경로이므로 일반적으로 변경하지 않습니다.
 
 ## AI 모드
 
@@ -138,8 +141,9 @@ docker compose -f compose.yaml -f compose.gpu.yaml down
 실제 worker는 원본 m4a를 임시 mono 16 kHz WAV로 표준화한 뒤 전사, alignment, diarization,
 local fake 분류를 순서대로 실행합니다. 동일 revision의 schema v2 JSON은
 `${TRANSCRIPT_HOST_DIR:-${DATA_ROOT}/transcripts}/<recording-id>/transcript.json`, Markdown은
-`${DATA_ROOT}/documents/<recording-id>/transcript.md`에 저장됩니다. Markdown에는 timestamp와
-`SPEAKER_XX` 임시 화자가 표시되며 실제 화자 이름 확정은 R5 범위입니다.
+`${DOCUMENT_HOST_DIR:-${DATA_ROOT}/documents}/0001_<첫 발화 20자>.md` 형태로 document root에 바로
+저장됩니다. 번호와 제목은 최초 렌더 때 고정됩니다. Markdown에는 timestamp와 `SPEAKER_XX`
+임시 화자가 표시되며 실제 화자 이름 확정은 R5 범위입니다.
 
 성공 출력은 GPU/driver/CUDA와 패키지 버전만 포함하며 토큰이나 전체 환경 변수는 출력하지
 않습니다. 실제 전사 smoke의 합성 tone/무음 결과는 품질이나 최적 batch size를 판단하는 자료로
