@@ -11,6 +11,7 @@ from app.jobs import Job
 from app.log import configure_logging
 from app.pipeline import FakePipelineHandler
 from app.real_pipeline import RealSpeechPipelineHandler
+from app.reconciliation import reconcile_markdown_artifacts
 from app.runtime import JobHandler, discover_once, process_one_job
 
 
@@ -33,6 +34,12 @@ def run(settings: Settings | None = None, handler: JobHandler | None = None) -> 
     signal.signal(signal.SIGINT, request_stop)
 
     migrate_database(config.database_path)
+    reconcile_markdown_artifacts(
+        config.database_path,
+        config.transcript_root,
+        config.document_root,
+        logger,
+    )
     tracker = StabilityTracker(config.file_stable_seconds)
     if handler is not None:
         job_handler = handler
