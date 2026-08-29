@@ -85,7 +85,7 @@ def create_app(
 
     application.include_router(create_recordings_router(config))
     application.include_router(create_media_router(config))
-    application.include_router(create_speaker_review_router(config.database_path))
+    application.include_router(create_speaker_review_router(config))
 
     return application
 

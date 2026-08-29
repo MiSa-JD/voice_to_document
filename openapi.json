@@ -37,6 +37,28 @@
         "title": "ActionItem",
         "type": "object"
       },
+      "AffectedRecordingResponse": {
+        "properties": {
+          "recording_id": {
+            "title": "Recording Id",
+            "type": "string"
+          },
+          "recording_revision": {
+            "title": "Recording Revision",
+            "type": "integer"
+          },
+          "render_job": {
+            "$ref": "#/components/schemas/RenderJobResponse"
+          }
+        },
+        "required": [
+          "recording_id",
+          "recording_revision",
+          "render_job"
+        ],
+        "title": "AffectedRecordingResponse",
+        "type": "object"
+      },
       "ApiErrorBody": {
         "properties": {
           "code": {
@@ -371,6 +393,47 @@
         "title": "PersonUpdateRequest",
         "type": "object"
       },
+      "PersonUpdateResponse": {
+        "properties": {
+          "affected_recordings": {
+            "items": {
+              "$ref": "#/components/schemas/AffectedRecordingResponse"
+            },
+            "title": "Affected Recordings",
+            "type": "array"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "updated_at": {
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "display_name",
+          "revision",
+          "created_at",
+          "updated_at",
+          "affected_recordings"
+        ],
+        "title": "PersonUpdateResponse",
+        "type": "object"
+      },
       "RecordingDetailResponse": {
         "properties": {
           "artifacts": {
@@ -688,6 +751,34 @@
         "title": "RecordingStatus",
         "type": "string"
       },
+      "RenderJobResponse": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "input_revision": {
+            "title": "Input Revision",
+            "type": "integer"
+          },
+          "kind": {
+            "default": "render",
+            "title": "Kind",
+            "type": "string"
+          },
+          "status": {
+            "default": "queued",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "input_revision"
+        ],
+        "title": "RenderJobResponse",
+        "type": "object"
+      },
       "SegmentResponse": {
         "properties": {
           "assignment_status": {
@@ -844,6 +935,9 @@
             "title": "Recording Revision",
             "type": "integer"
           },
+          "render_job": {
+            "$ref": "#/components/schemas/RenderJobResponse"
+          },
           "speaker_name": {
             "anyOf": [
               {
@@ -865,7 +959,8 @@
           "recording_revision",
           "person_id",
           "speaker_name",
-          "updated_segment_count"
+          "updated_segment_count",
+          "render_job"
         ],
         "title": "SpeakerAssignmentResponse",
         "type": "object"
@@ -1078,7 +1173,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/PersonResponse"
+                  "$ref": "#/components/schemas/PersonUpdateResponse"
                 }
               }
             },

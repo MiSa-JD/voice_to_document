@@ -188,6 +188,14 @@ export interface components {
             /** Task */
             task: string;
         };
+        /** AffectedRecordingResponse */
+        AffectedRecordingResponse: {
+            /** Recording Id */
+            recording_id: string;
+            /** Recording Revision */
+            recording_revision: number;
+            render_job: components["schemas"]["RenderJobResponse"];
+        };
         /** ApiErrorBody */
         ApiErrorBody: {
             /** Code */
@@ -302,6 +310,21 @@ export interface components {
             /** Expected Revision */
             expected_revision: number;
         };
+        /** PersonUpdateResponse */
+        PersonUpdateResponse: {
+            /** Affected Recordings */
+            affected_recordings: components["schemas"]["AffectedRecordingResponse"][];
+            /** Created At */
+            created_at: string;
+            /** Display Name */
+            display_name: string;
+            /** Id */
+            id: string;
+            /** Revision */
+            revision: number;
+            /** Updated At */
+            updated_at: string;
+        };
         /** RecordingDetailResponse */
         RecordingDetailResponse: {
             /** Artifacts */
@@ -393,6 +416,23 @@ export interface components {
          * @enum {string}
          */
         RecordingStatus: "DISCOVERED" | "TRANSCRIBING" | "SPEAKER_REVIEW" | "CLASSIFYING" | "READY_FOR_SUMMARY" | "SUMMARIZING" | "COMPLETED" | "FAILED";
+        /** RenderJobResponse */
+        RenderJobResponse: {
+            /** Id */
+            id: string;
+            /** Input Revision */
+            input_revision: number;
+            /**
+             * Kind
+             * @default render
+             */
+            kind: string;
+            /**
+             * Status
+             * @default queued
+             */
+            status: string;
+        };
         /** SegmentResponse */
         SegmentResponse: {
             /**
@@ -441,6 +481,7 @@ export interface components {
             recording_id: string;
             /** Recording Revision */
             recording_revision: number;
+            render_job: components["schemas"]["RenderJobResponse"];
             /** Speaker Name */
             speaker_name: string | null;
             /** Updated Segment Count */
@@ -591,7 +632,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["PersonResponse"];
+                    "application/json": components["schemas"]["PersonUpdateResponse"];
                 };
             };
             /** @description Not Found */

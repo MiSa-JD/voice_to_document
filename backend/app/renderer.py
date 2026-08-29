@@ -130,4 +130,4 @@ def _speaker_label(segment: Segment) -> str:
         return "UNASSIGNED"
     if segment.assignment_status == "overlap":
         return " + ".join(segment.overlapping_speaker_ids)
-    return segment.local_speaker_id
+    return segment.speaker_name or segment.local_speaker_id

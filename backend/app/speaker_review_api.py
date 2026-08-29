@@ -3,13 +3,13 @@ from __future__ import annotations
 import json
 import sqlite3
 import uuid
-from pathlib import Path
 from typing import Annotated, Any
 
 from fastapi import APIRouter
 from fastapi import Path as ApiPath
 from pydantic import BaseModel, Field, field_validator
 
+from app.config import Settings
 from app.db import connect, migrate_database, utc_now
 from app.recordings_api import ApiErrorResponse, ApiProblem
 
@@ -63,9 +63,28 @@ class SpeakerAssignmentResponse(BaseModel):
     person_id: str | None
     speaker_name: str | None
     updated_segment_count: int
+    render_job: RenderJobResponse
 
 
-def create_speaker_review_router(database_path: Path) -> APIRouter:
+class RenderJobResponse(BaseModel):
+    id: str
+    kind: str = "render"
+    status: str = "queued"
+    input_revision: int
+
+
+class AffectedRecordingResponse(BaseModel):
+    recording_id: str
+    recording_revision: int
+    render_job: RenderJobResponse
+
+
+class PersonUpdateResponse(PersonResponse):
+    affected_recordings: list[AffectedRecordingResponse]
+
+
+def create_speaker_review_router(settings: Settings) -> APIRouter:
+    database_path = settings.database_path
     router = APIRouter(tags=["speaker-review"])
 
     @router.get("/api/persons", response_model=PersonListResponse)
@@ -119,10 +138,10 @@ def create_speaker_review_router(database_path: Path) -> APIRouter:
 
     @router.patch(
         "/api/persons/{person_id}",
-        response_model=PersonResponse,
+        response_model=PersonUpdateResponse,
         responses={404: {"model": ApiErrorResponse}, 409: {"model": ApiErrorResponse}},
     )
-    def update_person(person_id: str, request: PersonUpdateRequest) -> PersonResponse:
+    def update_person(person_id: str, request: PersonUpdateRequest) -> PersonUpdateResponse:
         migrate_database(database_path)
         with connect(database_path) as connection:
             connection.execute("BEGIN IMMEDIATE")
@@ -133,6 +152,18 @@ def create_speaker_review_router(database_path: Path) -> APIRouter:
                 raise ApiProblem(404, "PERSON_NOT_FOUND", "인물을 찾을 수 없습니다.")
             current_revision = int(current["revision"])
             _check_revision(current_revision, request.expected_revision)
+            affected = connection.execute(
+                """
+                SELECT DISTINCT recording_id FROM (
+                    SELECT recording_id FROM recording_speakers WHERE person_id = ?
+                    UNION
+                    SELECT recording_id FROM segments WHERE person_id = ?
+                ) ORDER BY recording_id
+                """,
+                (person_id, person_id),
+            ).fetchall()
+            for affected_row in affected:
+                _ensure_render_not_active(connection, str(affected_row["recording_id"]))
             new_revision = current_revision + 1
             connection.execute(
                 """
@@ -157,8 +188,29 @@ def create_speaker_review_router(database_path: Path) -> APIRouter:
                 """,
                 (person_id,),
             ).fetchone()
+            affected_responses: list[AffectedRecordingResponse] = []
+            for affected_row in affected:
+                recording_id = str(affected_row["recording_id"])
+                recording_revision = _recording_revision(connection, recording_id) + 1
+                timestamp = utc_now()
+                connection.execute(
+                    "UPDATE segments SET revision = ? WHERE recording_id = ? AND person_id = ?",
+                    (recording_revision, recording_id, person_id),
+                )
+                _update_recording_revision(connection, recording_id, recording_revision, timestamp)
+                render_job = _enqueue_render(connection, recording_id, recording_revision)
+                affected_responses.append(
+                    AffectedRecordingResponse(
+                        recording_id=recording_id,
+                        recording_revision=recording_revision,
+                        render_job=render_job,
+                    )
+                )
             connection.commit()
-        return PersonResponse.model_validate(dict(row))
+        return PersonUpdateResponse(
+            **PersonResponse.model_validate(dict(row)).model_dump(),
+            affected_recordings=affected_responses,
+        )
 
     @router.put(
         "/api/recordings/{recording_id}/speakers/{local_speaker_id}",
@@ -179,6 +231,7 @@ def create_speaker_review_router(database_path: Path) -> APIRouter:
             connection.execute("BEGIN IMMEDIATE")
             current_revision = _recording_revision(connection, recording_id)
             _check_revision(current_revision, request.expected_revision)
+            _ensure_render_not_active(connection, recording_id)
             speaker = connection.execute(
                 """
                 SELECT 1 FROM recording_speakers
@@ -230,6 +283,7 @@ def create_speaker_review_router(database_path: Path) -> APIRouter:
                 },
                 recording_id,
             )
+            render_job = _enqueue_render(connection, recording_id, new_revision)
             connection.commit()
         return SpeakerAssignmentResponse(
             recording_id=recording_id,
@@ -237,6 +291,7 @@ def create_speaker_review_router(database_path: Path) -> APIRouter:
             person_id=request.person_id,
             speaker_name=speaker_name,
             updated_segment_count=cursor.rowcount,
+            render_job=render_job,
         )
 
     @router.patch(
@@ -262,6 +317,7 @@ def create_speaker_review_router(database_path: Path) -> APIRouter:
             recording_id = str(segment["recording_id"])
             current_revision = _recording_revision(connection, recording_id)
             _check_revision(current_revision, request.expected_revision)
+            _ensure_render_not_active(connection, recording_id)
             speaker_name = _person_name(connection, request.person_id)
             new_revision = current_revision + 1
             timestamp = utc_now()
@@ -286,6 +342,7 @@ def create_speaker_review_router(database_path: Path) -> APIRouter:
                 },
                 recording_id,
             )
+            render_job = _enqueue_render(connection, recording_id, new_revision)
             connection.commit()
         return SpeakerAssignmentResponse(
             recording_id=recording_id,
@@ -293,6 +350,7 @@ def create_speaker_review_router(database_path: Path) -> APIRouter:
             person_id=request.person_id,
             speaker_name=speaker_name,
             updated_segment_count=1,
+            render_job=render_job,
         )
 
     @router.patch(
@@ -310,6 +368,7 @@ def create_speaker_review_router(database_path: Path) -> APIRouter:
             connection.execute("BEGIN IMMEDIATE")
             current_revision = _recording_revision(connection, request.recording_id)
             _check_revision(current_revision, request.expected_revision)
+            _ensure_render_not_active(connection, request.recording_id)
             placeholders = ",".join("?" for _ in request.segment_ids)
             rows = connection.execute(
                 f"SELECT id, recording_id FROM segments WHERE id IN ({placeholders})",
@@ -348,6 +407,7 @@ def create_speaker_review_router(database_path: Path) -> APIRouter:
                 },
                 request.recording_id,
             )
+            render_job = _enqueue_render(connection, request.recording_id, new_revision)
             connection.commit()
         return SpeakerAssignmentResponse(
             recording_id=request.recording_id,
@@ -355,6 +415,7 @@ def create_speaker_review_router(database_path: Path) -> APIRouter:
             person_id=request.person_id,
             speaker_name=speaker_name,
             updated_segment_count=cursor.rowcount,
+            render_job=render_job,
         )
 
     return router
@@ -395,6 +456,40 @@ def _person_name(connection: sqlite3.Connection, person_id: str | None) -> str |
     if row is None:
         raise ApiProblem(404, "PERSON_NOT_FOUND", "인물을 찾을 수 없습니다.")
     return str(row["display_name"])
+
+
+def _ensure_render_not_active(connection: sqlite3.Connection, recording_id: str) -> None:
+    row = connection.execute(
+        """
+        SELECT id FROM jobs
+        WHERE recording_id = ? AND kind = 'render' AND status IN ('queued', 'running')
+        """,
+        (recording_id,),
+    ).fetchone()
+    if row is not None:
+        raise ApiProblem(
+            409,
+            "RENDER_IN_PROGRESS",
+            "수정 결과를 반영하는 중입니다. 완료 후 다시 시도해 주세요.",
+            {"job_id": str(row["id"])},
+        )
+
+
+def _enqueue_render(
+    connection: sqlite3.Connection, recording_id: str, revision: int
+) -> RenderJobResponse:
+    job_id = str(uuid.uuid4())
+    timestamp = utc_now()
+    connection.execute(
+        """
+        INSERT INTO jobs(
+            id, recording_id, kind, status, attempts, available_at,
+            created_at, updated_at, input_revision, settings_fingerprint
+        ) VALUES (?, ?, 'render', 'queued', 0, ?, ?, ?, ?, 'speaker-edit-v1')
+        """,
+        (job_id, recording_id, timestamp, timestamp, timestamp, revision),
+    )
+    return RenderJobResponse(id=job_id, input_revision=revision)
 
 
 def _update_recording_revision(
