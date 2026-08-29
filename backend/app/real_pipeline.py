@@ -160,6 +160,7 @@ class RealSpeechPipelineHandler(FakePipelineHandler):
         )
         self._replace_segments(transcript)
         self._write_transcript_json(transcript)
+        self._generate_speaker_clips(job.recording_id, source, transcript.revision)
         self._set_review_required(job.recording_id)
         if self.continue_to_documents:
             self._enqueue_classification(transcript)

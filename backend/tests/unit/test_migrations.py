@@ -32,6 +32,7 @@ def test_empty_database_migrates_to_current_schema(tmp_path: Path) -> None:
         "persons",
         "recording_speakers",
         "speaker_embeddings",
+        "speaker_clips",
     } <= tables
     assert version == CURRENT_SCHEMA_VERSION
     assert foreign_keys == 1
@@ -98,6 +99,36 @@ def test_version_one_database_upgrades_to_current_version(tmp_path: Path) -> Non
         }
     assert {"input_revision", "settings_fingerprint"} <= columns
     assert {"assignment_status", "overlapping_speaker_ids_json"} <= segment_columns
+
+
+def test_speaker_clip_schema_defaults_existing_speakers_to_pending(tmp_path: Path) -> None:
+    database_path = tmp_path / "app.db"
+    with connect(database_path) as connection:
+        connection.execute(
+            "CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)"
+        )
+        for version in range(1, 6):
+            for statement in MIGRATIONS[version]:
+                connection.execute(statement)
+            connection.execute(
+                "INSERT INTO schema_migrations(version, applied_at) VALUES (?, 'now')", (version,)
+            )
+        _insert_recording(connection)
+        connection.execute(
+            """
+            INSERT INTO recording_speakers(
+                recording_id, local_speaker_id, speaker_source, revision, created_at, updated_at
+            ) VALUES ('recording', 'SPEAKER_00', 'unresolved', 1, 'now', 'now')
+            """
+        )
+
+    migrate_database(database_path)
+
+    with connect(database_path) as connection:
+        speaker = connection.execute(
+            "SELECT clip_status, clip_error_code FROM recording_speakers"
+        ).fetchone()
+    assert dict(speaker) == {"clip_status": "pending", "clip_error_code": None}
 
 
 def test_version_two_segments_are_preserved_as_assigned(tmp_path: Path) -> None:
