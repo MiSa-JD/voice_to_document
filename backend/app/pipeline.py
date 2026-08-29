@@ -18,6 +18,7 @@ from app.classification import (
 )
 from app.config import Settings
 from app.db import connect, utc_now
+from app.document_identity import document_relative_path, ensure_document_identity
 from app.jobs import Job
 from app.long_transcript import (
     LongTranscriptClassifier,
@@ -364,6 +365,7 @@ class FakePipelineHandler:
             transcript.revision,
             schema_version=transcript.schema_version,
         )
+        identity = ensure_document_identity(self.settings.database_path, recording_id)
         try:
             markdown = self.markdown_renderer(transcript)
         except Exception as error:
@@ -373,7 +375,7 @@ class FakePipelineHandler:
             self.settings.document_root,
             recording_id,
             "transcript_markdown",
-            paths.markdown,
+            document_relative_path(identity.sequence, identity.title),
             markdown,
             transcript.revision,
             schema_version=MARKDOWN_SCHEMA_VERSION,

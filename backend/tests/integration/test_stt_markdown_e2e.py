@@ -62,6 +62,9 @@ def test_file_detection_to_revision_matched_markdown_survives_restart(
 
     json_row = artifacts[0]
     markdown_row = artifacts[1]
+    assert Path(markdown_row["relative_path"]).parent == Path(".")
+    assert markdown_row["relative_path"].startswith("0001_")
+    assert markdown_row["relative_path"].endswith(".md")
     json_path = settings.transcript_root / json_row["relative_path"]
     markdown_path = settings.document_root / markdown_row["relative_path"]
     payload = json.loads(json_path.read_text(encoding="utf-8"))
@@ -72,6 +75,7 @@ def test_file_detection_to_revision_matched_markdown_survives_restart(
     assert f"Recording ID: `{recording_id}`" in markdown_before_restart.decode()
     assert "Revision: 1" in markdown_before_restart.decode()
     assert "SPEAKER_00" in markdown_before_restart.decode()
+    assert not any(path.is_dir() for path in settings.document_root.iterdir())
 
     restarted_handler = FakePipelineHandler(settings, logger)
     assert not process_one_job(settings.database_path, restarted_handler, logger)
