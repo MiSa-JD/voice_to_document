@@ -779,6 +779,267 @@
         "title": "RenderJobResponse",
         "type": "object"
       },
+      "RetranscriptionCreateRequest": {
+        "properties": {
+          "confirm_impact": {
+            "const": true,
+            "title": "Confirm Impact",
+            "type": "boolean"
+          },
+          "content_description": {
+            "anyOf": [
+              {
+                "maxLength": 1000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content Description"
+          },
+          "expected_revision": {
+            "minimum": 1.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "language": {
+            "default": "auto",
+            "enum": [
+              "auto",
+              "ko",
+              "en",
+              "ja"
+            ],
+            "title": "Language",
+            "type": "string"
+          },
+          "terms": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 50,
+            "title": "Terms",
+            "type": "array"
+          }
+        },
+        "required": [
+          "expected_revision",
+          "confirm_impact"
+        ],
+        "title": "RetranscriptionCreateRequest",
+        "type": "object"
+      },
+      "RetranscriptionCreateResponse": {
+        "properties": {
+          "base_revision": {
+            "title": "Base Revision",
+            "type": "integer"
+          },
+          "hint_applied": {
+            "title": "Hint Applied",
+            "type": "boolean"
+          },
+          "job": {
+            "$ref": "#/components/schemas/RetranscriptionJobResponse"
+          },
+          "language": {
+            "title": "Language",
+            "type": "string"
+          },
+          "recording_id": {
+            "title": "Recording Id",
+            "type": "string"
+          },
+          "request_id": {
+            "title": "Request Id",
+            "type": "string"
+          },
+          "target_revision": {
+            "title": "Target Revision",
+            "type": "integer"
+          },
+          "warning": {
+            "title": "Warning",
+            "type": "string"
+          }
+        },
+        "required": [
+          "request_id",
+          "recording_id",
+          "base_revision",
+          "target_revision",
+          "language",
+          "hint_applied",
+          "warning",
+          "job"
+        ],
+        "title": "RetranscriptionCreateResponse",
+        "type": "object"
+      },
+      "RetranscriptionJobResponse": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "input_revision": {
+            "title": "Input Revision",
+            "type": "integer"
+          },
+          "kind": {
+            "default": "transcribe",
+            "title": "Kind",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "input_revision"
+        ],
+        "title": "RetranscriptionJobResponse",
+        "type": "object"
+      },
+      "RetranscriptionLatestResponse": {
+        "properties": {
+          "base_revision": {
+            "title": "Base Revision",
+            "type": "integer"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "error_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Code"
+          },
+          "hint_applied": {
+            "title": "Hint Applied",
+            "type": "boolean"
+          },
+          "history_available": {
+            "title": "History Available",
+            "type": "boolean"
+          },
+          "history_location": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "History Location"
+          },
+          "new_language": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "New Language"
+          },
+          "new_segment_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "New Segment Count"
+          },
+          "previous_language": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous Language"
+          },
+          "previous_segment_count": {
+            "title": "Previous Segment Count",
+            "type": "integer"
+          },
+          "recording_id": {
+            "title": "Recording Id",
+            "type": "string"
+          },
+          "request_id": {
+            "title": "Request Id",
+            "type": "string"
+          },
+          "requested_language": {
+            "title": "Requested Language",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "target_revision": {
+            "title": "Target Revision",
+            "type": "integer"
+          },
+          "unresolved_speaker_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unresolved Speaker Count"
+          },
+          "updated_at": {
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "request_id",
+          "recording_id",
+          "status",
+          "base_revision",
+          "target_revision",
+          "previous_language",
+          "requested_language",
+          "new_language",
+          "previous_segment_count",
+          "new_segment_count",
+          "unresolved_speaker_count",
+          "hint_applied",
+          "history_available",
+          "history_location",
+          "error_code",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "RetranscriptionLatestResponse",
+        "type": "object"
+      },
       "SegmentResponse": {
         "properties": {
           "assignment_status": {
@@ -1331,6 +1592,130 @@
         "summary": "Recording Detail",
         "tags": [
           "recordings"
+        ]
+      }
+    },
+    "/api/recordings/{recording_id}/retranscriptions": {
+      "post": {
+        "operationId": "create_retranscription_api_recordings__recording_id__retranscriptions_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "recording_id",
+            "required": true,
+            "schema": {
+              "title": "Recording Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RetranscriptionCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RetranscriptionCreateResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Retranscription",
+        "tags": [
+          "retranscriptions"
+        ]
+      }
+    },
+    "/api/recordings/{recording_id}/retranscriptions/latest": {
+      "get": {
+        "operationId": "latest_retranscription_api_recordings__recording_id__retranscriptions_latest_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "recording_id",
+            "required": true,
+            "schema": {
+              "title": "Recording Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RetranscriptionLatestResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Latest Retranscription",
+        "tags": [
+          "retranscriptions"
         ]
       }
     },

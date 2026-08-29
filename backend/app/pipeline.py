@@ -33,6 +33,7 @@ from app.renderer import (
     transcript_artifact_paths,
     with_classification,
 )
+from app.retranscriptions import commit_retranscription, request_for_job
 from app.runtime import PermanentJobError, RetryableJobError
 from app.schema import Classification, MeetingSummary, RecordingStatus, Segment, Transcript
 from app.speaker_clips import generate_speaker_clips
@@ -122,6 +123,21 @@ class FakePipelineHandler:
             except ValueError as error:
                 raise PermanentJobError("INVALID_RENDER_SOURCE", str(error)) from error
             return
+        if (
+            job.kind == "transcribe"
+            and request_for_job(self.settings.database_path, job.id) is not None
+        ):
+            try:
+                self._transcribe(job)
+            except OSError as error:
+                raise RetryableJobError(
+                    "ARTIFACT_IO_ERROR", "retranscription staging failed"
+                ) from error
+            except (FakeFixtureNotFoundError, ValueError) as error:
+                raise PermanentJobError(
+                    "INVALID_RETRANSCRIPTION_RESULT", "retranscription result is invalid"
+                ) from error
+            return
         try:
             if job.kind == "transcribe":
                 self._transcribe(job)
@@ -162,6 +178,17 @@ class FakePipelineHandler:
 
     def _transcribe(self, job: Job) -> None:
         recording = self._recording(job.recording_id)
+        retranscription = request_for_job(self.settings.database_path, job.id)
+        if retranscription is not None:
+            transcript = self.adapters.transcribe(
+                job.recording_id,
+                str(recording["content_sha256"]),
+                retranscription.target_revision,
+                language=retranscription.language,
+                initial_prompt=retranscription.initial_prompt,
+            )
+            commit_retranscription(self.settings, job.id, transcript)
+            return
         self._enter(job.recording_id, RecordingStatus.TRANSCRIBING)
         transcript = self.adapters.transcribe(
             job.recording_id,

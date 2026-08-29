@@ -44,6 +44,13 @@ def claim_next_job(database_path: Path, now: str | None = None) -> Job | None:
             """,
             (attempts, timestamp, timestamp, row["id"]),
         )
+        connection.execute(
+            """
+            UPDATE retranscription_requests SET updated_at = ?
+            WHERE job_id = ?
+            """,
+            (timestamp, row["id"]),
+        )
         connection.commit()
         return Job(
             id=str(row["id"]),
@@ -81,6 +88,16 @@ def fail_job(
         )
         if cursor.rowcount != 1:
             raise ValueError("job is not running")
+        if retry_at is None:
+            connection.execute(
+                """
+                UPDATE retranscription_requests
+                SET content_hint = NULL, terms_json = NULL,
+                    completed_at = ?, updated_at = ?
+                WHERE job_id = ?
+                """,
+                (timestamp, timestamp, job_id),
+            )
 
 
 def release_job(database_path: Path, job_id: str) -> None:
@@ -96,6 +113,10 @@ def release_job(database_path: Path, job_id: str) -> None:
         )
         if cursor.rowcount != 1:
             raise ValueError("job is not running")
+        connection.execute(
+            "UPDATE retranscription_requests SET updated_at = ? WHERE job_id = ?",
+            (timestamp, job_id),
+        )
 
 
 def _finish_job(database_path: Path, job_id: str, status: str) -> None:
@@ -111,3 +132,13 @@ def _finish_job(database_path: Path, job_id: str, status: str) -> None:
         )
         if cursor.rowcount != 1:
             raise ValueError("job is not running")
+        if status == "succeeded":
+            connection.execute(
+                """
+                UPDATE retranscription_requests
+                SET content_hint = NULL, terms_json = NULL,
+                    completed_at = ?, updated_at = ?
+                WHERE job_id = ?
+                """,
+                (timestamp, timestamp, job_id),
+            )

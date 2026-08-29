@@ -88,7 +88,7 @@ class TranscriptionResult:
 
 
 class WhisperXModel(Protocol):
-    def transcribe(self, audio: object, *, batch_size: int) -> object: ...
+    def transcribe(self, audio: object, *, batch_size: int, **kwargs: object) -> object: ...
 
 
 class WhisperXRuntime(Protocol):
@@ -127,12 +127,24 @@ class WhisperXAdapter:
         self._model: WhisperXModel | None = None
         self._whisperx_version: str | None = None
 
-    def transcribe(self, normalized_wav: Path) -> TranscriptionResult:
-        model = self._get_model()
+    def transcribe(
+        self,
+        normalized_wav: Path,
+        *,
+        language: str | None = None,
+        initial_prompt: str | None = None,
+    ) -> TranscriptionResult:
+        effective_language = language or self._config.language
+        model = self._get_model(effective_language)
         assert self._runtime is not None
         try:
             audio = self._runtime.load_audio(str(normalized_wav))
-            raw_result = model.transcribe(audio, batch_size=self._config.batch_size)
+            options: dict[str, object] = {}
+            if language is not None:
+                options["language"] = language
+            if initial_prompt is not None:
+                options["initial_prompt"] = initial_prompt
+            raw_result = model.transcribe(audio, batch_size=self._config.batch_size, **options)
         except Exception as error:
             if _is_out_of_memory(error):
                 raise WhisperXAdapterError(
@@ -144,15 +156,16 @@ class WhisperXAdapter:
                 "WhisperX transcription could not be completed",
             ) from error
 
-        language, segments = _normalize_result(raw_result, self._config.language)
+        result_language, segments = _normalize_result(raw_result, effective_language)
         return TranscriptionResult(
-            language=language,
+            language=result_language,
             segments=segments,
-            model_fingerprint=self._fingerprint(),
+            model_fingerprint=self._fingerprint(effective_language),
         )
 
-    def _get_model(self) -> WhisperXModel:
-        if self._model is not None:
+    def _get_model(self, language: str | None) -> WhisperXModel:
+        use_cached = language == self._config.language
+        if use_cached and self._model is not None:
             return self._model
         try:
             runtime = self._runtime_loader()
@@ -163,7 +176,7 @@ class WhisperXAdapter:
                 self._config.model,
                 self._config.device,
                 compute_type=self._config.compute_type,
-                language=self._config.language,
+                language=language,
                 download_root=str(self._config.model_cache_root),
                 use_auth_token=(
                     self._hf_token.get_secret_value() if self._hf_token is not None else None
@@ -190,11 +203,12 @@ class WhisperXAdapter:
                 "WhisperX model could not be loaded",
             ) from error
         self._runtime = runtime
-        self._model = model
+        if use_cached:
+            self._model = model
         self._whisperx_version = whisperx_version
         return model
 
-    def _fingerprint(self) -> ModelFingerprint:
+    def _fingerprint(self, language: str | None) -> ModelFingerprint:
         assert self._whisperx_version is not None
         return ModelFingerprint(
             whisperx_version=self._whisperx_version,
@@ -202,7 +216,7 @@ class WhisperXAdapter:
             device=self._config.device,
             compute_type=self._config.compute_type,
             batch_size=self._config.batch_size,
-            language=self._config.language,
+            language=language,
         )
 
 

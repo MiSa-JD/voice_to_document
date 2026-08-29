@@ -25,6 +25,7 @@ from app.diarization import (
 from app.jobs import Job
 from app.media import AudioNormalizationError, normalized_audio
 from app.pipeline import FakePipelineHandler
+from app.retranscriptions import commit_retranscription, request_for_job
 from app.runtime import PermanentJobError, RetryableJobError
 from app.schema import RecordingStatus, Segment, SpeechModelFingerprints, Transcript
 from app.speech_failures import speech_failure_policy
@@ -39,7 +40,13 @@ from app.transcription import (
 
 
 class TranscriptionAdapter(Protocol):
-    def transcribe(self, normalized_wav: Path) -> TranscriptionResult: ...
+    def transcribe(
+        self,
+        normalized_wav: Path,
+        *,
+        language: str | None = None,
+        initial_prompt: str | None = None,
+    ) -> TranscriptionResult: ...
 
 
 class AlignmentAdapter(Protocol):
@@ -127,17 +134,27 @@ class RealSpeechPipelineHandler(FakePipelineHandler):
         except (PermanentJobError, RetryableJobError):
             raise
         except Exception:
-            self._mark_failed(job.recording_id, "PIPELINE_ERROR", "처리 단계가 실패했습니다.")
+            if request_for_job(self.settings.database_path, job.id) is None:
+                self._mark_failed(job.recording_id, "PIPELINE_ERROR", "처리 단계가 실패했습니다.")
             raise
 
     def _transcribe_real(self, job: Job) -> None:
         recording = self._recording(job.recording_id)
-        self._enter(job.recording_id, RecordingStatus.TRANSCRIBING)
+        retranscription = request_for_job(self.settings.database_path, job.id)
+        if retranscription is None:
+            self._enter(job.recording_id, RecordingStatus.TRANSCRIBING)
         source = self._validated_source(str(recording["source_path"]))
         duration_ms = int(recording["duration_ms"])
         audio_duration = duration_ms / 1000
         with normalized_audio(source) as normalized_wav:
-            transcription = self.transcription_adapter.transcribe(normalized_wav)
+            if retranscription is None:
+                transcription = self.transcription_adapter.transcribe(normalized_wav)
+            else:
+                transcription = self.transcription_adapter.transcribe(
+                    normalized_wav,
+                    language=retranscription.language,
+                    initial_prompt=retranscription.initial_prompt,
+                )
             alignment = self.alignment_adapter.align(
                 normalized_wav,
                 transcription.segments,
@@ -152,12 +169,19 @@ class RealSpeechPipelineHandler(FakePipelineHandler):
         transcript = normalize_real_transcript(
             recording_id=job.recording_id,
             content_sha256=str(recording["content_sha256"]),
-            revision=int(recording["revision"]),
+            revision=(
+                int(recording["revision"])
+                if retranscription is None
+                else retranscription.target_revision
+            ),
             duration_ms=duration_ms,
             transcription=transcription,
             alignment=alignment,
             diarization=diarization,
         )
+        if retranscription is not None:
+            commit_retranscription(self.settings, job.id, transcript)
+            return
         self._replace_segments(transcript)
         self._write_transcript_json(transcript)
         self._generate_speaker_clips(job.recording_id, source, transcript.revision)
@@ -198,7 +222,8 @@ class RealSpeechPipelineHandler(FakePipelineHandler):
         cause: Exception | None = None,
     ) -> None:
         policy = speech_failure_policy(code)
-        self._mark_failed(job.recording_id, code, policy.message)
+        if request_for_job(self.settings.database_path, job.id) is None:
+            self._mark_failed(job.recording_id, code, policy.message)
         error_type = RetryableJobError if policy.retryable else PermanentJobError
         error = error_type(code, policy.message)
         if cause is not None:
