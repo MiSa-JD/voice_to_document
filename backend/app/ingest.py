@@ -21,7 +21,11 @@ def sha256_file(path: Path, chunk_size: int = 1024 * 1024) -> str:
     return digest.hexdigest()
 
 
-def ingest_file(database_path: Path, source_path: Path) -> RegistrationResult:
+def ingest_file(
+    database_path: Path,
+    source_path: Path,
+    recording_root: Path | None = None,
+) -> RegistrationResult:
     before = source_path.stat()
     media = probe_media(source_path)
     content_sha256 = sha256_file(source_path)
@@ -35,4 +39,5 @@ def ingest_file(database_path: Path, source_path: Path) -> RegistrationResult:
         size_bytes=after.st_size,
         duration_ms=media.duration_ms,
         recorded_at=media.recorded_at,
+        recording_root=recording_root,
     )

@@ -39,6 +39,7 @@ def test_complete_fixture_reaches_completed_with_revision_matched_artifacts(
         {"kind": "classify", "status": "succeeded"},
     ]
     assert [row["kind"] for row in artifacts] == [
+        "recording_audio",
         "transcript_json",
         "transcript_markdown",
     ]
@@ -56,7 +57,7 @@ def test_complete_fixture_reaches_completed_with_revision_matched_artifacts(
 
     assert not process_one_job(settings.database_path, handler, logging.getLogger("test"))
     with connect(settings.database_path) as connection:
-        assert connection.execute("SELECT COUNT(*) FROM artifacts").fetchone()[0] == 2
+        assert connection.execute("SELECT COUNT(*) FROM artifacts").fetchone()[0] == 3
 
 
 def test_review_fixture_keeps_flag_but_generates_temporary_speaker_markdown(
@@ -122,9 +123,12 @@ def test_renderer_failure_preserves_json_without_markdown_registration(
         "status": "FAILED",
         "last_error_code": "TRANSCRIPT_RENDER_ERROR",
     }
-    assert [row["kind"] for row in artifacts] == ["transcript_json"]
+    assert [row["kind"] for row in artifacts] == ["recording_audio", "transcript_json"]
     assert not list(settings.document_root.rglob("*.md"))
-    payload = (settings.transcript_root / artifacts[0]["relative_path"]).read_text(encoding="utf-8")
+    transcript_artifact = next(row for row in artifacts if row["kind"] == "transcript_json")
+    payload = (settings.transcript_root / transcript_artifact["relative_path"]).read_text(
+        encoding="utf-8"
+    )
     assert '"classification"' in payload
 
 
@@ -156,6 +160,7 @@ def test_duplicate_input_and_handler_restart_keep_one_artifact_per_kind(
             """
         ).fetchall()
     assert [dict(row) for row in rows] == [
+        {"kind": "recording_audio", "revision": 1, "count": 1},
         {"kind": "transcript_json", "revision": 1, "count": 1},
         {"kind": "transcript_markdown", "revision": 1, "count": 1},
     ]

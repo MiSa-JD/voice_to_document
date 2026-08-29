@@ -48,9 +48,16 @@ def register_recording(
     size_bytes: int,
     duration_ms: int,
     recorded_at: str | None = None,
+    recording_root: Path | None = None,
 ) -> RegistrationResult:
     migrate_database(database_path)
     timestamp = utc_now()
+    resolved_source = source_path.resolve()
+    resolved_root = (recording_root or source_path.parent).resolve()
+    try:
+        relative_source = resolved_source.relative_to(resolved_root)
+    except ValueError as error:
+        raise ValueError("recording source leaves configured root") from error
     with connect(database_path) as connection:
         connection.execute("BEGIN IMMEDIATE")
         existing = connection.execute(
@@ -60,7 +67,14 @@ def register_recording(
         if existing is not None:
             connection.execute(
                 "UPDATE recordings SET source_path = ?, updated_at = ? WHERE id = ?",
-                (str(source_path.resolve()), timestamp, existing["id"]),
+                (str(resolved_source), timestamp, existing["id"]),
+            )
+            _upsert_recording_audio(
+                connection,
+                str(existing["id"]),
+                relative_source,
+                content_sha256,
+                timestamp,
             )
             connection.commit()
             return RegistrationResult(
@@ -82,7 +96,7 @@ def register_recording(
                 (
                     recording_id,
                     content_sha256,
-                    str(source_path.resolve()),
+                    str(resolved_source),
                     source_path.name,
                     size_bytes,
                     duration_ms,
@@ -100,8 +114,46 @@ def register_recording(
                 """,
                 (job_id, recording_id, timestamp, timestamp, timestamp),
             )
+            _upsert_recording_audio(
+                connection,
+                recording_id,
+                relative_source,
+                content_sha256,
+                timestamp,
+            )
             connection.commit()
         except sqlite3.Error:
             connection.rollback()
             raise
         return RegistrationResult(recording_id=recording_id, job_id=job_id, created=True)
+
+
+def _upsert_recording_audio(
+    connection: sqlite3.Connection,
+    recording_id: str,
+    relative_path: Path,
+    content_sha256: str,
+    timestamp: str,
+) -> str:
+    existing = connection.execute(
+        """
+        SELECT id FROM artifacts
+        WHERE recording_id = ? AND kind = 'recording_audio' AND revision = 1
+        """,
+        (recording_id,),
+    ).fetchone()
+    artifact_id = str(existing["id"]) if existing is not None else str(uuid.uuid4())
+    connection.execute(
+        """
+        INSERT INTO artifacts(
+            id, recording_id, kind, relative_path, content_sha256,
+            schema_version, revision, created_at
+        ) VALUES (?, ?, 'recording_audio', ?, ?, 1, 1, ?)
+        ON CONFLICT(recording_id, kind, revision) DO UPDATE SET
+            relative_path = excluded.relative_path,
+            content_sha256 = excluded.content_sha256,
+            created_at = excluded.created_at
+        """,
+        (artifact_id, recording_id, relative_path.as_posix(), content_sha256, timestamp),
+    )
+    return artifact_id

@@ -45,7 +45,9 @@ def test_artifact_write_is_atomic_and_idempotent(tmp_path: Path) -> None:
     assert second.path.read_bytes() == b"second"
     assert not list(root.rglob("*.tmp"))
     with connect(database_path) as connection:
-        rows = connection.execute("SELECT content_sha256 FROM artifacts").fetchall()
+        rows = connection.execute(
+            "SELECT content_sha256 FROM artifacts WHERE kind = 'transcript_json'"
+        ).fetchall()
     assert len(rows) == 1
     assert rows[0]["content_sha256"] == second.content_sha256
 
@@ -68,7 +70,12 @@ def test_file_failure_leaves_no_final_file_or_database_row(tmp_path: Path) -> No
     assert not list(root.rglob("transcript.json"))
     assert not list(root.rglob("*.tmp"))
     with connect(database_path) as connection:
-        assert connection.execute("SELECT COUNT(*) FROM artifacts").fetchone()[0] == 0
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM artifacts WHERE kind = 'transcript_json'"
+            ).fetchone()[0]
+            == 0
+        )
 
 
 def test_database_failure_is_recovered_by_retry(tmp_path: Path) -> None:
@@ -93,7 +100,12 @@ def test_database_failure_is_recovered_by_retry(tmp_path: Path) -> None:
     write_artifact(*arguments)
 
     with connect(database_path) as connection:
-        assert connection.execute("SELECT COUNT(*) FROM artifacts").fetchone()[0] == 1
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM artifacts WHERE kind = 'transcript_json'"
+            ).fetchone()[0]
+            == 1
+        )
 
 
 @pytest.mark.parametrize("category", ["../회의", "회의/비밀", "\\server", "..."])

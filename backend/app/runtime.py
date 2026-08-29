@@ -35,7 +35,11 @@ def discover_once(
     results: list[RegistrationResult] = []
     for path in tracker.scan(settings.recording_input_dir):
         try:
-            result = ingest_file(settings.database_path, path)
+            result = ingest_file(
+                settings.database_path,
+                path,
+                recording_root=settings.recording_input_dir,
+            )
         except MediaProbeError as error:
             _record_discovery_failure(settings, logger, path, error.code, str(error))
         except FileChangedDuringIngestError:

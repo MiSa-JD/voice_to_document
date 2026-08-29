@@ -65,10 +65,14 @@ test('restart preservation: worker 재시작 뒤 결과가 유지된다', async 
 
   const detail = await request.get(`/api/recordings/${body.items[0]!.id}`);
   const payload = (await detail.json()) as {
-    artifacts: unknown[];
+    artifacts: Array<{ kind: string }>;
     jobs: Array<{ status: string }>;
   };
-  expect(payload.artifacts).toHaveLength(2);
+  expect(payload.artifacts.map((artifact) => artifact.kind).sort()).toEqual([
+    'recording_audio',
+    'transcript_json',
+    'transcript_markdown',
+  ]);
   expect(payload.jobs).toHaveLength(2);
   expect(payload.jobs.every((job) => job.status === 'succeeded')).toBe(true);
 });

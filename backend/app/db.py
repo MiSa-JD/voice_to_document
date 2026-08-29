@@ -5,7 +5,7 @@ import time
 from datetime import UTC, datetime
 from pathlib import Path
 
-CURRENT_SCHEMA_VERSION = 5
+CURRENT_SCHEMA_VERSION = 6
 
 
 class FutureSchemaError(RuntimeError):
@@ -334,6 +334,36 @@ MIGRATIONS: dict[int, tuple[str, ...]] = {
         """
         CREATE INDEX speaker_embeddings_source
         ON speaker_embeddings(recording_id, local_speaker_id, segment_id)
+        """,
+    ),
+    6: (
+        """
+        ALTER TABLE recording_speakers ADD COLUMN clip_status TEXT NOT NULL DEFAULT 'pending'
+        CHECK (clip_status IN ('pending', 'ready', 'insufficient', 'failed'))
+        """,
+        "ALTER TABLE recording_speakers ADD COLUMN clip_error_code TEXT",
+        """
+        CREATE TABLE speaker_clips (
+            id TEXT PRIMARY KEY,
+            recording_id TEXT NOT NULL,
+            local_speaker_id TEXT NOT NULL,
+            segment_id TEXT NOT NULL REFERENCES segments(id) ON DELETE CASCADE,
+            artifact_id TEXT NOT NULL UNIQUE REFERENCES artifacts(id) ON DELETE CASCADE,
+            revision INTEGER NOT NULL CHECK (revision > 0),
+            clip_index INTEGER NOT NULL CHECK (clip_index >= 0 AND clip_index < 3),
+            start_ms INTEGER NOT NULL CHECK (start_ms >= 0),
+            end_ms INTEGER NOT NULL CHECK (end_ms > start_ms),
+            silence_ratio REAL NOT NULL CHECK (silence_ratio >= 0.0 AND silence_ratio <= 1.0),
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (recording_id, local_speaker_id)
+                REFERENCES recording_speakers(recording_id, local_speaker_id)
+                ON DELETE CASCADE,
+            UNIQUE(recording_id, local_speaker_id, revision, clip_index)
+        )
+        """,
+        """
+        CREATE INDEX speaker_clips_speaker_revision
+        ON speaker_clips(recording_id, local_speaker_id, revision, clip_index)
         """,
     ),
 }

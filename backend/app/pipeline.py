@@ -35,6 +35,7 @@ from app.renderer import (
 )
 from app.runtime import PermanentJobError, RetryableJobError
 from app.schema import Classification, MeetingSummary, RecordingStatus, Segment, Transcript
+from app.speaker_clips import generate_speaker_clips
 from app.state import transition_and_enqueue, transition_recording
 
 
@@ -155,6 +156,11 @@ class FakePipelineHandler:
         )
         self._replace_segments(transcript)
         self._write_transcript_json(transcript)
+        self._generate_speaker_clips(
+            job.recording_id,
+            Path(str(recording["source_path"])),
+            transcript.revision,
+        )
         if transcript.needs_speaker_review:
             self._set_review_required(job.recording_id)
         self._enqueue_classification(transcript)
@@ -318,6 +324,24 @@ class FakePipelineHandler:
         with connect(self.settings.database_path) as connection:
             connection.execute(
                 "UPDATE recordings SET needs_speaker_review = 1 WHERE id = ?", (recording_id,)
+            )
+
+    def _generate_speaker_clips(self, recording_id: str, source: Path, revision: int) -> None:
+        try:
+            generate_speaker_clips(
+                self.settings.database_path,
+                self.settings.speaker_root,
+                recording_id,
+                source,
+                revision,
+            )
+        except Exception:
+            self.logger.exception(
+                "speaker_clip_generation_failed",
+                extra={
+                    "recording_id": recording_id,
+                    "error_code": "SPEAKER_CLIP_GENERATION_FAILED",
+                },
             )
 
     def _enqueue_classification(self, transcript: Transcript) -> None:
