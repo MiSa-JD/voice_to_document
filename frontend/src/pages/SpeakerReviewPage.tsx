@@ -26,6 +26,8 @@ type DraftTarget =
   | { kind: 'unknown'; label: string }
   | { kind: 'new'; displayName: string; label: string };
 
+type RevisionConflict = { currentRevision: number | null };
+
 export function SpeakerReviewPage() {
   const { id = '' } = useParams();
   const [attempt, setAttempt] = useState(0);
@@ -110,6 +112,7 @@ function SpeakerReview({
   const [draftTarget, setDraftTarget] = useState<DraftTarget | null>(null);
   const [confirming, setConfirming] = useState(false);
   const [savingDraft, setSavingDraft] = useState(false);
+  const [conflict, setConflict] = useState<RevisionConflict | null>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
   const recordingAudio = data.artifacts.find(
     (artifact) => artifact.kind === 'recording_audio',
@@ -159,11 +162,15 @@ function SpeakerReview({
       );
       onReload();
     } catch (error) {
-      setMessage(
-        error instanceof ApiError
-          ? error.message
-          : '화자 연결을 저장하지 못했습니다.',
-      );
+      if (isRevisionConflict(error)) {
+        setConflict({ currentRevision: currentRevision(error) });
+      } else {
+        setMessage(
+          error instanceof ApiError
+            ? error.message
+            : '화자 연결을 저장하지 못했습니다.',
+        );
+      }
     } finally {
       setSavingSpeaker(null);
     }
@@ -202,8 +209,15 @@ function SpeakerReview({
     try {
       let personId: string | null = null;
       if (draftTarget.kind === 'person') personId = draftTarget.personId;
-      if (draftTarget.kind === 'new')
-        personId = (await createPerson(draftTarget.displayName)).id;
+      if (draftTarget.kind === 'new') {
+        const person = await createPerson(draftTarget.displayName);
+        personId = person.id;
+        setDraftTarget({
+          kind: 'person',
+          personId: person.id,
+          label: person.display_name,
+        });
+      }
       await assignSegmentSpeakers(
         data.recording.id,
         [...selectedSegments],
@@ -215,11 +229,15 @@ function SpeakerReview({
       setConfirming(false);
       onReload();
     } catch (error) {
-      setMessage(
-        error instanceof ApiError
-          ? error.message
-          : '발화 변경을 저장하지 못했습니다.',
-      );
+      if (isRevisionConflict(error)) {
+        setConflict({ currentRevision: currentRevision(error) });
+      } else {
+        setMessage(
+          error instanceof ApiError
+            ? error.message
+            : '발화 변경을 저장하지 못했습니다.',
+        );
+      }
     } finally {
       setSavingDraft(false);
     }
@@ -238,6 +256,14 @@ function SpeakerReview({
     ) {
       event.preventDefault();
     }
+  };
+
+  const acceptLatest = () => {
+    if (!window.confirm('로컬 변경을 폐기하고 최신 서버 내용을 불러올까요?'))
+      return;
+    discardDraft();
+    setConflict(null);
+    onReload();
   };
 
   return (
@@ -267,6 +293,19 @@ function SpeakerReview({
         <p className="inline-error" role="alert">
           {message}
         </p>
+      )}
+      {conflict && (
+        <section className="conflict-notice" role="alert">
+          <h2>다른 변경이 먼저 저장되었습니다</h2>
+          <p>
+            저장을 중단했습니다. 로컬 변경은 유지됩니다.
+            {conflict.currentRevision !== null &&
+              ` 서버의 최신 revision은 ${conflict.currentRevision}입니다.`}
+          </p>
+          <button type="button" onClick={acceptLatest}>
+            로컬 변경 폐기 후 최신 내용 불러오기
+          </button>
+        </section>
       )}
 
       <section className="speaker-layout">
@@ -498,4 +537,17 @@ function clipStatusLabel(
     failed: '대표 클립을 만들지 못했습니다.',
     ready: '대표 클립을 찾을 수 없습니다.',
   }[status];
+}
+
+function isRevisionConflict(error: unknown): error is ApiError {
+  return (
+    error instanceof ApiError &&
+    error.status === 409 &&
+    error.code === 'REVISION_CONFLICT'
+  );
+}
+
+function currentRevision(error: ApiError) {
+  const value = error.details.current_revision;
+  return typeof value === 'number' ? value : null;
 }

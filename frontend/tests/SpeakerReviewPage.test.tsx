@@ -344,3 +344,106 @@ test('draft 이탈을 경고하고 명시적 폐기 전에는 서버를 변경�
   await userEvent.click(screen.getByRole('button', { name: '변경 폐기' }));
   expect(screen.getByText('0개 발화 선택')).toBeInTheDocument();
 });
+
+test('전체 화자 연결의 revision 충돌을 일반 오류와 구분한다', async () => {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn().mockImplementation((path: string, init?: RequestInit) => {
+      if (path === '/api/persons')
+        return Promise.resolve(
+          response(200, {
+            items: [
+              {
+                id: 'person-id',
+                display_name: '김민지',
+                revision: 1,
+                created_at: 'now',
+                updated_at: 'now',
+              },
+            ],
+            total: 1,
+          }),
+        );
+      if (init?.method === 'PUT')
+        return Promise.resolve(
+          response(409, {
+            error: {
+              code: 'REVISION_CONFLICT',
+              message: '다른 변경이 먼저 저장되었습니다.',
+              details: { current_revision: 7 },
+            },
+          }),
+        );
+      return Promise.resolve(response(200, detail));
+    }),
+  );
+  renderPage();
+
+  fireEvent.change(
+    await screen.findByRole('combobox', { name: 'SPEAKER_00 인물 연결' }),
+    { target: { value: 'person-id' } },
+  );
+  const alert = await screen.findByRole('alert');
+  expect(alert).toHaveTextContent('저장을 중단했습니다');
+  expect(alert).toHaveTextContent('최신 revision은 7');
+});
+
+test('batch 충돌에서 draft를 유지하고 확인한 경우에만 최신 내용을 읽는다', async () => {
+  const fetchMock = vi
+    .fn()
+    .mockImplementation((path: string, init?: RequestInit) => {
+      if (path === '/api/persons')
+        return Promise.resolve(response(200, { items: [], total: 0 }));
+      if (path === '/api/segments/speakers' && init?.method === 'PATCH')
+        return Promise.resolve(
+          response(409, {
+            error: {
+              code: 'REVISION_CONFLICT',
+              message: '다른 변경이 먼저 저장되었습니다.',
+              details: { current_revision: 5 },
+            },
+          }),
+        );
+      return Promise.resolve(response(200, detail));
+    });
+  const confirm = vi.fn().mockReturnValueOnce(false).mockReturnValueOnce(true);
+  vi.stubGlobal('fetch', fetchMock);
+  vi.stubGlobal('confirm', confirm);
+  renderPage();
+
+  await userEvent.click(
+    await screen.findByRole('checkbox', { name: '00:01 발화 선택' }),
+  );
+  await userEvent.selectOptions(
+    screen.getByRole('combobox', { name: '선택 발화 변경 인물' }),
+    '__unknown__',
+  );
+  await userEvent.click(screen.getByRole('button', { name: '변경 확인' }));
+  await userEvent.click(screen.getByRole('button', { name: '일괄 저장' }));
+
+  expect(await screen.findByRole('alert')).toHaveTextContent(
+    '로컬 변경은 유지됩니다',
+  );
+  expect(
+    screen.getByRole('checkbox', { name: '00:01 발화 선택' }),
+  ).toBeChecked();
+  const reload = screen.getByRole('button', {
+    name: '로컬 변경 폐기 후 최신 내용 불러오기',
+  });
+  await userEvent.click(reload);
+  expect(screen.getByText('1개 발화 선택')).toBeInTheDocument();
+  expect(
+    fetchMock.mock.calls.filter(
+      ([path]) => path === '/api/recordings/recording-id',
+    ),
+  ).toHaveLength(1);
+
+  await userEvent.click(reload);
+  await waitFor(() =>
+    expect(
+      fetchMock.mock.calls.filter(
+        ([path]) => path === '/api/recordings/recording-id',
+      ),
+    ).toHaveLength(2),
+  );
+});
