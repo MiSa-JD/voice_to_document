@@ -311,6 +311,8 @@ export interface components {
             recording: components["schemas"]["RecordingItem"];
             /** Segments */
             segments: components["schemas"]["SegmentResponse"][];
+            /** Speakers */
+            speakers: components["schemas"]["RecordingSpeakerResponse"][];
             summary: components["schemas"]["MeetingSummary"] | null;
         };
         /** RecordingItem */
@@ -352,6 +354,39 @@ export interface components {
             };
             /** Total */
             total: number;
+        };
+        /** RecordingSpeakerResponse */
+        RecordingSpeakerResponse: {
+            /** Clip Error Code */
+            clip_error_code: string | null;
+            /**
+             * Clip Status
+             * @enum {string}
+             */
+            clip_status: "pending" | "ready" | "insufficient" | "failed";
+            /** Duration Ms */
+            duration_ms: number;
+            /** Local Speaker Id */
+            local_speaker_id: string;
+            /** Person Id */
+            person_id: string | null;
+            /** Representative Clip Artifact Id */
+            representative_clip_artifact_id: string | null;
+            /** Representative Clip End Ms */
+            representative_clip_end_ms: number | null;
+            /** Representative Clip Start Ms */
+            representative_clip_start_ms: number | null;
+            /** Segment Count */
+            segment_count: number;
+            /** Speaker Name */
+            speaker_name: string | null;
+            /** Speaker Score */
+            speaker_score: number | null;
+            /**
+             * Speaker Source
+             * @enum {string}
+             */
+            speaker_source: "manual" | "auto" | "unresolved";
         };
         /**
          * RecordingStatus

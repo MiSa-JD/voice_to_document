@@ -96,8 +96,24 @@ class JobResponse(BaseModel):
     updated_at: str
 
 
+class RecordingSpeakerResponse(BaseModel):
+    local_speaker_id: str
+    person_id: str | None
+    speaker_name: str | None
+    speaker_source: Literal["manual", "auto", "unresolved"]
+    speaker_score: float | None
+    segment_count: int
+    duration_ms: int
+    clip_status: Literal["pending", "ready", "insufficient", "failed"]
+    clip_error_code: str | None
+    representative_clip_artifact_id: str | None
+    representative_clip_start_ms: int | None
+    representative_clip_end_ms: int | None
+
+
 class RecordingDetailResponse(BaseModel):
     recording: RecordingItem
+    speakers: list[RecordingSpeakerResponse]
     segments: list[SegmentResponse]
     artifacts: list[ArtifactResponse]
     jobs: list[JobResponse]
@@ -191,6 +207,38 @@ def create_recordings_router(settings: Settings) -> APIRouter:
                 """,
                 (recording_id,),
             ).fetchall()
+            speakers = connection.execute(
+                """
+                SELECT rs.local_speaker_id, rs.person_id,
+                       persons.display_name AS speaker_name,
+                       rs.speaker_source, rs.speaker_score,
+                       COUNT(segments.id) AS segment_count,
+                       COALESCE(SUM(segments.end_ms - segments.start_ms), 0) AS duration_ms,
+                       rs.clip_status, rs.clip_error_code,
+                       clip.artifact_id AS representative_clip_artifact_id,
+                       clip.start_ms AS representative_clip_start_ms,
+                       clip.end_ms AS representative_clip_end_ms
+                FROM recording_speakers AS rs
+                LEFT JOIN persons ON persons.id = rs.person_id
+                LEFT JOIN segments
+                  ON segments.recording_id = rs.recording_id
+                 AND segments.local_speaker_id = rs.local_speaker_id
+                LEFT JOIN speaker_clips AS clip
+                  ON clip.recording_id = rs.recording_id
+                 AND clip.local_speaker_id = rs.local_speaker_id
+                 AND clip.clip_index = 0
+                 AND clip.revision = (
+                     SELECT MAX(latest.revision)
+                     FROM speaker_clips AS latest
+                     WHERE latest.recording_id = rs.recording_id
+                       AND latest.local_speaker_id = rs.local_speaker_id
+                 )
+                WHERE rs.recording_id = ?
+                GROUP BY rs.recording_id, rs.local_speaker_id
+                ORDER BY rs.local_speaker_id
+                """,
+                (recording_id,),
+            ).fetchall()
             artifacts = connection.execute(
                 """
                 SELECT id, kind, relative_path, content_sha256, schema_version,
@@ -209,6 +257,7 @@ def create_recordings_router(settings: Settings) -> APIRouter:
             ).fetchall()
         return RecordingDetailResponse(
             recording=_recording_item(dict(recording)),
+            speakers=[RecordingSpeakerResponse.model_validate(dict(row)) for row in speakers],
             segments=[_segment_response(dict(row)) for row in segments],
             artifacts=[ArtifactResponse.model_validate(dict(row)) for row in artifacts],
             jobs=[JobResponse.model_validate(dict(row)) for row in jobs],

@@ -100,6 +100,10 @@ function RecordingDetail({ data }: { data: RecordingDetailResponse }) {
         <span>길이: {formatDuration(recording.duration_ms)}</span>
       </div>
 
+      <Link className="button-link" to={`/recordings/${recording.id}/speakers`}>
+        화자 검토
+      </Link>
+
       <section className="panel detail-section">
         <h2>전체 내용</h2>
         {data.segments.length === 0 ? (
