@@ -5,7 +5,7 @@ import time
 from datetime import UTC, datetime
 from pathlib import Path
 
-CURRENT_SCHEMA_VERSION = 4
+CURRENT_SCHEMA_VERSION = 5
 
 
 class FutureSchemaError(RuntimeError):
@@ -192,6 +192,148 @@ MIGRATIONS: dict[int, tuple[str, ...]] = {
         """
         INSERT INTO document_sequence_counter(singleton, last_value)
         SELECT 1, COALESCE(MAX(document_sequence), 0) FROM recordings
+        """,
+    ),
+    5: (
+        """
+        CREATE TABLE persons (
+            id TEXT PRIMARY KEY,
+            display_name TEXT NOT NULL CHECK (length(trim(display_name)) > 0),
+            revision INTEGER NOT NULL DEFAULT 1 CHECK (revision > 0),
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """,
+        """
+        CREATE INDEX persons_display_name
+        ON persons(display_name)
+        """,
+        """
+        CREATE TABLE segments_v5 (
+            id TEXT PRIMARY KEY,
+            recording_id TEXT NOT NULL REFERENCES recordings(id) ON DELETE CASCADE,
+            start_ms INTEGER NOT NULL CHECK (start_ms >= 0),
+            end_ms INTEGER NOT NULL CHECK (end_ms > start_ms),
+            text TEXT NOT NULL CHECK (length(trim(text)) > 0),
+            local_speaker_id TEXT,
+            assignment_status TEXT NOT NULL DEFAULT 'assigned' CHECK (
+                assignment_status IN ('assigned', 'overlap', 'unassigned')
+            ),
+            overlapping_speaker_ids_json TEXT NOT NULL DEFAULT '[]',
+            person_id TEXT REFERENCES persons(id) ON DELETE SET NULL,
+            speaker_name TEXT,
+            speaker_source TEXT NOT NULL DEFAULT 'unresolved' CHECK (
+                speaker_source IN ('manual', 'auto', 'unresolved')
+            ),
+            speaker_score REAL,
+            revision INTEGER NOT NULL CHECK (revision > 0),
+            CHECK (
+                (assignment_status = 'unassigned' AND local_speaker_id IS NULL)
+                OR (assignment_status != 'unassigned' AND local_speaker_id IS NOT NULL)
+            )
+        )
+        """,
+        """
+        INSERT INTO segments_v5(
+            id, recording_id, start_ms, end_ms, text, local_speaker_id,
+            assignment_status, overlapping_speaker_ids_json, person_id, speaker_name,
+            speaker_source, speaker_score, revision
+        )
+        SELECT id, recording_id, start_ms, end_ms, text, local_speaker_id,
+               assignment_status, overlapping_speaker_ids_json, NULL, speaker_name,
+               speaker_source, speaker_score, revision
+        FROM segments
+        """,
+        "DROP TABLE segments",
+        "ALTER TABLE segments_v5 RENAME TO segments",
+        """
+        CREATE INDEX segments_recording_time
+        ON segments(recording_id, start_ms, end_ms, id)
+        """,
+        """
+        CREATE UNIQUE INDEX segments_embedding_source
+        ON segments(id, recording_id, local_speaker_id)
+        """,
+        """
+        CREATE TABLE recording_speakers (
+            recording_id TEXT NOT NULL REFERENCES recordings(id) ON DELETE CASCADE,
+            local_speaker_id TEXT NOT NULL CHECK (length(trim(local_speaker_id)) > 0),
+            person_id TEXT REFERENCES persons(id) ON DELETE SET NULL,
+            speaker_source TEXT NOT NULL DEFAULT 'unresolved' CHECK (
+                speaker_source IN ('manual', 'auto', 'unresolved')
+            ),
+            speaker_score REAL CHECK (
+                speaker_score IS NULL OR (speaker_score >= 0.0 AND speaker_score <= 1.0)
+            ),
+            revision INTEGER NOT NULL DEFAULT 1 CHECK (revision > 0),
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (recording_id, local_speaker_id)
+        )
+        """,
+        """
+        CREATE INDEX recording_speakers_person
+        ON recording_speakers(person_id, recording_id, local_speaker_id)
+        """,
+        """
+        INSERT INTO recording_speakers(
+            recording_id, local_speaker_id, speaker_source, revision, created_at, updated_at
+        )
+        SELECT discovered.recording_id, discovered.local_speaker_id, 'unresolved', 1,
+               recordings.created_at, recordings.updated_at
+        FROM (
+            SELECT recording_id, local_speaker_id
+            FROM segments
+            WHERE local_speaker_id IS NOT NULL
+            UNION
+            SELECT segments.recording_id, json_each.value
+            FROM segments
+            JOIN json_each(
+                CASE
+                    WHEN json_valid(segments.overlapping_speaker_ids_json)
+                    THEN segments.overlapping_speaker_ids_json
+                    ELSE '[]'
+                END
+            )
+            WHERE json_each.type = 'text'
+              AND length(trim(json_each.value)) > 0
+        ) AS discovered
+        JOIN recordings ON recordings.id = discovered.recording_id
+        """,
+        """
+        CREATE TABLE speaker_embeddings (
+            id TEXT PRIMARY KEY,
+            person_id TEXT NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
+            recording_id TEXT NOT NULL REFERENCES recordings(id) ON DELETE CASCADE,
+            local_speaker_id TEXT NOT NULL,
+            segment_id TEXT NOT NULL,
+            model_fingerprint TEXT NOT NULL CHECK (length(trim(model_fingerprint)) > 0),
+            vector_store TEXT NOT NULL CHECK (length(trim(vector_store)) > 0),
+            collection_name TEXT NOT NULL CHECK (length(trim(collection_name)) > 0),
+            vector_key TEXT NOT NULL UNIQUE CHECK (vector_key = id),
+            status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'invalidated')),
+            invalidated_at TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY (recording_id, local_speaker_id)
+                REFERENCES recording_speakers(recording_id, local_speaker_id)
+                ON DELETE CASCADE,
+            FOREIGN KEY (segment_id, recording_id, local_speaker_id)
+                REFERENCES segments(id, recording_id, local_speaker_id)
+                ON DELETE CASCADE,
+            CHECK (
+                (status = 'active' AND invalidated_at IS NULL)
+                OR (status = 'invalidated' AND invalidated_at IS NOT NULL)
+            )
+        )
+        """,
+        """
+        CREATE INDEX speaker_embeddings_person_status
+        ON speaker_embeddings(person_id, status, created_at)
+        """,
+        """
+        CREATE INDEX speaker_embeddings_source
+        ON speaker_embeddings(recording_id, local_speaker_id, segment_id)
         """,
     ),
 }

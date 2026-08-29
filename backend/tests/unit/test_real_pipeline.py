@@ -242,6 +242,12 @@ def test_real_handler_persists_classified_json_and_markdown_artifacts(
             FROM segments ORDER BY start_ms
             """
         ).fetchall()
+        recording_speakers = connection.execute(
+            """
+            SELECT local_speaker_id, person_id, speaker_source, speaker_score, revision
+            FROM recording_speakers ORDER BY local_speaker_id
+            """
+        ).fetchall()
         artifacts = connection.execute(
             "SELECT kind, relative_path, schema_version, revision FROM artifacts ORDER BY kind"
         ).fetchall()
@@ -261,6 +267,22 @@ def test_real_handler_persists_classified_json_and_markdown_artifacts(
     assert json.loads(segments[1]["overlapping_speaker_ids_json"]) == [
         "SPEAKER_00",
         "SPEAKER_01",
+    ]
+    assert [dict(row) for row in recording_speakers] == [
+        {
+            "local_speaker_id": "SPEAKER_00",
+            "person_id": None,
+            "speaker_source": "unresolved",
+            "speaker_score": None,
+            "revision": 1,
+        },
+        {
+            "local_speaker_id": "SPEAKER_01",
+            "person_id": None,
+            "speaker_source": "unresolved",
+            "speaker_score": None,
+            "revision": 1,
+        },
     ]
     assert json_artifact["schema_version"] == 2
     assert markdown_artifact["schema_version"] == 1
