@@ -134,3 +134,47 @@ def test_version_two_segments_are_preserved_as_assigned(tmp_path: Path) -> None:
         "assignment_status": "assigned",
         "overlapping_speaker_ids_json": "[]",
     }
+
+
+def test_version_three_recordings_receive_stable_ordered_sequences(tmp_path: Path) -> None:
+    database_path = tmp_path / "app.db"
+    with connect(database_path) as connection:
+        connection.execute(
+            "CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)"
+        )
+        for version in (1, 2, 3):
+            for statement in MIGRATIONS[version]:
+                connection.execute(statement)
+            connection.execute(
+                "INSERT INTO schema_migrations(version, applied_at) VALUES (?, 'now')", (version,)
+            )
+        for recording_id, created_at in (
+            ("b", "2026-01-02"),
+            ("c", "2026-01-01"),
+            ("a", "2026-01-02"),
+        ):
+            connection.execute(
+                """
+                INSERT INTO recordings(
+                    id, content_sha256, source_path, original_name, size_bytes, duration_ms,
+                    status, created_at, updated_at
+                ) VALUES (?, ?, '/source', 'source.m4a', 1, 1000, 'COMPLETED', ?, 'now')
+                """,
+                (recording_id, recording_id * 64, created_at),
+            )
+
+    migrate_database(database_path)
+
+    with connect(database_path) as connection:
+        rows = connection.execute(
+            "SELECT id, document_sequence, document_title FROM recordings ORDER BY document_sequence"
+        ).fetchall()
+        counter = connection.execute(
+            "SELECT last_value FROM document_sequence_counter WHERE singleton = 1"
+        ).fetchone()[0]
+    assert [dict(row) for row in rows] == [
+        {"id": "c", "document_sequence": 1, "document_title": None},
+        {"id": "a", "document_sequence": 2, "document_title": None},
+        {"id": "b", "document_sequence": 3, "document_title": None},
+    ]
+    assert counter == 3

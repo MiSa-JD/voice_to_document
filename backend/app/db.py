@@ -5,7 +5,7 @@ import time
 from datetime import UTC, datetime
 from pathlib import Path
 
-CURRENT_SCHEMA_VERSION = 3
+CURRENT_SCHEMA_VERSION = 4
 
 
 class FutureSchemaError(RuntimeError):
@@ -161,6 +161,37 @@ MIGRATIONS: dict[int, tuple[str, ...]] = {
         """
         CREATE INDEX segments_recording_time
         ON segments(recording_id, start_ms, end_ms, id)
+        """,
+    ),
+    4: (
+        "ALTER TABLE recordings ADD COLUMN document_sequence INTEGER",
+        "ALTER TABLE recordings ADD COLUMN document_title TEXT",
+        """
+        UPDATE recordings
+        SET document_sequence = (
+            SELECT COUNT(*)
+            FROM recordings AS earlier
+            WHERE earlier.created_at < recordings.created_at
+               OR (
+                   earlier.created_at = recordings.created_at
+                   AND earlier.id <= recordings.id
+               )
+        )
+        """,
+        """
+        CREATE UNIQUE INDEX recordings_document_sequence_unique
+        ON recordings(document_sequence)
+        WHERE document_sequence IS NOT NULL
+        """,
+        """
+        CREATE TABLE document_sequence_counter (
+            singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+            last_value INTEGER NOT NULL CHECK (last_value >= 0)
+        )
+        """,
+        """
+        INSERT INTO document_sequence_counter(singleton, last_value)
+        SELECT 1, COALESCE(MAX(document_sequence), 0) FROM recordings
         """,
     ),
 }
