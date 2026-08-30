@@ -56,7 +56,7 @@ until curl --fail --silent --show-error "$E2E_BASE_URL/health/live" >/dev/null; 
   fi
   sleep 1
 done
-npm --prefix frontend run test:e2e -- --grep 'pipeline flow|브라우저에서'
+make test-e2e
 markdown_count=$(find "$document_host_dir" -mindepth 1 -maxdepth 1 -type f -name '*.md' | wc -l)
 test "$markdown_count" -eq 1
 test -z "$(find "$document_host_dir" -mindepth 1 -type d -print -quit)"
