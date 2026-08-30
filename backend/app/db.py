@@ -7,7 +7,7 @@ from pathlib import Path
 
 import sqlite_vec  # type: ignore[import-untyped]
 
-CURRENT_SCHEMA_VERSION = 8
+CURRENT_SCHEMA_VERSION = 9
 
 
 class FutureSchemaError(RuntimeError):
@@ -417,6 +417,51 @@ MIGRATIONS: dict[int, tuple[str, ...]] = {
             vector_id INTEGER PRIMARY KEY,
             embedding FLOAT[512] distance_metric=cosine
         )
+        """,
+    ),
+    9: (
+        """
+        CREATE TABLE speaker_profiles (
+            id TEXT PRIMARY KEY,
+            person_id TEXT NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
+            model_fingerprint TEXT NOT NULL CHECK (length(trim(model_fingerprint)) > 0),
+            sample_count INTEGER NOT NULL CHECK (sample_count >= 0),
+            recording_count INTEGER NOT NULL CHECK (
+                recording_count >= 0 AND recording_count <= sample_count
+            ),
+            status TEXT NOT NULL CHECK (status IN ('eligible', 'insufficient')),
+            vector_store TEXT,
+            collection_name TEXT,
+            vector_key TEXT UNIQUE,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE(person_id, model_fingerprint),
+            CHECK (
+                (
+                    status = 'eligible' AND sample_count >= 2
+                    AND vector_store IS NOT NULL AND collection_name IS NOT NULL
+                    AND vector_key IS NOT NULL
+                ) OR (
+                    status = 'insufficient'
+                    AND vector_store IS NULL AND collection_name IS NULL AND vector_key IS NULL
+                )
+            )
+        )
+        """,
+        """
+        CREATE INDEX speaker_profiles_person_status
+        ON speaker_profiles(person_id, status, model_fingerprint)
+        """,
+        """
+        CREATE TABLE speaker_profile_members (
+            profile_id TEXT NOT NULL REFERENCES speaker_profiles(id) ON DELETE CASCADE,
+            embedding_id TEXT NOT NULL REFERENCES speaker_embeddings(id) ON DELETE CASCADE,
+            PRIMARY KEY (profile_id, embedding_id)
+        )
+        """,
+        """
+        CREATE INDEX speaker_profile_members_embedding
+        ON speaker_profile_members(embedding_id, profile_id)
         """,
     ),
 }

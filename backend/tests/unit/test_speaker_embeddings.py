@@ -17,6 +17,7 @@ from app.speaker_embeddings import (
     SpeakerEmbeddingError,
     finalize_speaker_embeddings,
     invalidate_embeddings,
+    rebuild_person_profiles,
 )
 
 
@@ -181,6 +182,17 @@ def test_incompatible_fingerprints_are_stored_separately(
         ("model:a", 2),
         ("model:b", 2),
     ]
+    with connect(settings.database_path) as connection:
+        profiles = connection.execute(
+            """
+            SELECT model_fingerprint, status, sample_count
+            FROM speaker_profiles ORDER BY model_fingerprint
+            """
+        ).fetchall()
+    assert [tuple(row) for row in profiles] == [
+        ("model:a", "eligible", 2),
+        ("model:b", "eligible", 2),
+    ]
 
 
 def test_reassignment_invalidation_removes_vectors_but_keeps_audit_metadata(
@@ -205,6 +217,35 @@ def test_reassignment_invalidation_removes_vectors_but_keeps_audit_metadata(
         row["invalidated_at"] is not None for row in statuses if row["status"] == "invalidated"
     )
     assert vector_count == 1
+    with connect(settings.database_path) as connection:
+        profile = connection.execute(
+            "SELECT status, sample_count, vector_key FROM speaker_profiles"
+        ).fetchone()
+        member_count = connection.execute(
+            "SELECT COUNT(*) FROM speaker_profile_members"
+        ).fetchone()[0]
+    assert dict(profile) == {
+        "status": "insufficient",
+        "sample_count": 0,
+        "vector_key": None,
+    }
+    assert member_count == 0
+
+    rebuild_person_profiles(settings.database_path, {person_id})
+    with connect(settings.database_path) as connection:
+        rebuilt = connection.execute(
+            "SELECT status, sample_count, recording_count, vector_key FROM speaker_profiles"
+        ).fetchone()
+        rebuilt_members = connection.execute(
+            "SELECT COUNT(*) FROM speaker_profile_members"
+        ).fetchone()[0]
+    assert dict(rebuilt) == {
+        "status": "insufficient",
+        "sample_count": 1,
+        "recording_count": 1,
+        "vector_key": None,
+    }
+    assert rebuilt_members == 1
 
 
 def test_invalid_vector_is_rejected(settings_values: dict[str, Any]) -> None:
@@ -239,3 +280,61 @@ def test_gated_embedding_model_is_a_non_retryable_access_error(
     with pytest.raises(SpeakerEmbeddingError) as captured:
         adapter._get_inference()
     assert captured.value.code == "MODEL_ACCESS_DENIED"
+
+
+def test_profile_aggregates_members_and_persists_normalized_centroid(
+    settings_values: dict[str, Any],
+) -> None:
+    settings = Settings(**settings_values)
+    recording_id, person_id, _segment_ids = _seed_sources(settings)
+
+    finalize_speaker_embeddings(settings, recording_id, FakeSpeakerEmbeddingAdapter())
+
+    with connect(settings.database_path) as connection:
+        profile = connection.execute(
+            """
+            SELECT sp.person_id, sp.status, sp.sample_count, sp.recording_count,
+                   vec_length(sv.embedding) AS dimension,
+                   vec_distance_cosine(sv.embedding, sv.embedding) AS self_distance
+            FROM speaker_profiles AS sp
+            JOIN speaker_vector_keys AS keys ON keys.vector_key = sp.vector_key
+            JOIN speaker_vectors AS sv ON sv.vector_id = keys.id
+            """
+        ).fetchone()
+        members = connection.execute("SELECT COUNT(*) FROM speaker_profile_members").fetchone()[0]
+
+    assert dict(profile) == {
+        "person_id": person_id,
+        "status": "eligible",
+        "sample_count": 2,
+        "recording_count": 1,
+        "dimension": EMBEDDING_DIMENSION,
+        "self_distance": pytest.approx(0.0, abs=1e-6),
+    }
+    assert members == 2
+
+
+def test_one_clean_sample_keeps_profile_ineligible(settings_values: dict[str, Any]) -> None:
+    settings = Settings(**settings_values)
+    recording_id, person_id, segment_ids = _seed_sources(settings)
+    with connect(settings.database_path) as connection:
+        connection.execute("UPDATE segments SET person_id = NULL WHERE id = ?", (segment_ids[1],))
+
+    finalize_speaker_embeddings(settings, recording_id, FakeSpeakerEmbeddingAdapter())
+
+    with connect(settings.database_path) as connection:
+        profile = connection.execute(
+            """
+            SELECT person_id, status, sample_count, recording_count, vector_key
+            FROM speaker_profiles
+            """
+        ).fetchone()
+        vector_count = connection.execute("SELECT COUNT(*) FROM speaker_vectors").fetchone()[0]
+    assert dict(profile) == {
+        "person_id": person_id,
+        "status": "insufficient",
+        "sample_count": 1,
+        "recording_count": 1,
+        "vector_key": None,
+    }
+    assert vector_count == 1

@@ -203,7 +203,23 @@ def finalize_speaker_embeddings(
             model_fingerprint=raw_result.model_fingerprint,
         )
         created.append(_register_embedding(settings.database_path, candidate, result))
+    affected_person_ids = _recording_person_ids(settings.database_path, recording_id)
+    rebuild_person_profiles(settings.database_path, affected_person_ids)
     return created
+
+
+def _recording_person_ids(database_path: Path, recording_id: str) -> set[str]:
+    with connect(database_path) as connection:
+        rows = connection.execute(
+            """
+            SELECT person_id FROM speaker_embeddings WHERE recording_id = ?
+            UNION
+            SELECT person_id FROM recording_speakers
+            WHERE recording_id = ? AND person_id IS NOT NULL
+            """,
+            (recording_id, recording_id),
+        ).fetchall()
+    return {str(row["person_id"]) for row in rows if row["person_id"] is not None}
 
 
 def _eligible_clips(database_path: Path, recording_id: str) -> list[sqlite3.Row]:
@@ -308,19 +324,7 @@ def _register_embedding(
                 timestamp,
             ),
         )
-        connection.execute(
-            "INSERT OR IGNORE INTO speaker_vector_keys(vector_key) VALUES (?)", (embedding_id,)
-        )
-        vector_id = int(
-            connection.execute(
-                "SELECT id FROM speaker_vector_keys WHERE vector_key = ?", (embedding_id,)
-            ).fetchone()["id"]
-        )
-        connection.execute("DELETE FROM speaker_vectors WHERE vector_id = ?", (vector_id,))
-        connection.execute(
-            "INSERT INTO speaker_vectors(vector_id, embedding) VALUES (?, ?)",
-            (vector_id, sqlite3.Binary(_float32_bytes(result.vector))),
-        )
+        _upsert_vector(connection, embedding_id, result.vector)
         connection.commit()
     return embedding_id
 
@@ -363,4 +367,182 @@ def invalidate_embeddings(
         "DELETE FROM speaker_vectors WHERE vector_id = ?",
         [(int(row["id"]),) for row in vector_rows],
     )
-    return {str(row["person_id"]) for row in rows}
+    affected = {str(row["person_id"]) for row in rows}
+    _invalidate_profiles(connection, affected)
+    return affected
+
+
+def _upsert_vector(connection: sqlite3.Connection, vector_key: str, vector: Sequence[float]) -> int:
+    connection.execute(
+        "INSERT OR IGNORE INTO speaker_vector_keys(vector_key) VALUES (?)", (vector_key,)
+    )
+    vector_id = int(
+        connection.execute(
+            "SELECT id FROM speaker_vector_keys WHERE vector_key = ?", (vector_key,)
+        ).fetchone()["id"]
+    )
+    connection.execute("DELETE FROM speaker_vectors WHERE vector_id = ?", (vector_id,))
+    connection.execute(
+        "INSERT INTO speaker_vectors(vector_id, embedding) VALUES (?, ?)",
+        (vector_id, sqlite3.Binary(_float32_bytes(vector))),
+    )
+    return vector_id
+
+
+def _delete_vector(connection: sqlite3.Connection, vector_key: str | None) -> None:
+    if vector_key is None:
+        return
+    row = connection.execute(
+        "SELECT id FROM speaker_vector_keys WHERE vector_key = ?", (vector_key,)
+    ).fetchone()
+    if row is not None:
+        connection.execute("DELETE FROM speaker_vectors WHERE vector_id = ?", (int(row["id"]),))
+
+
+def _invalidate_profiles(connection: sqlite3.Connection, person_ids: set[str]) -> None:
+    if not person_ids:
+        return
+    placeholders = ",".join("?" for _ in person_ids)
+    rows = connection.execute(
+        f"SELECT id, vector_key FROM speaker_profiles WHERE person_id IN ({placeholders})",
+        sorted(person_ids),
+    ).fetchall()
+    for row in rows:
+        _delete_vector(connection, cast(str | None, row["vector_key"]))
+    profile_ids = [str(row["id"]) for row in rows]
+    if profile_ids:
+        profile_placeholders = ",".join("?" for _ in profile_ids)
+        connection.execute(
+            f"DELETE FROM speaker_profile_members WHERE profile_id IN ({profile_placeholders})",
+            profile_ids,
+        )
+        timestamp = utc_now()
+        connection.execute(
+            f"""
+            UPDATE speaker_profiles
+            SET sample_count = 0, recording_count = 0, status = 'insufficient',
+                vector_store = NULL, collection_name = NULL, vector_key = NULL, updated_at = ?
+            WHERE id IN ({profile_placeholders})
+            """,
+            (timestamp, *profile_ids),
+        )
+
+
+def rebuild_person_profiles(database_path: Path, person_ids: set[str]) -> None:
+    for person_id in sorted(person_ids):
+        _rebuild_person_profiles(database_path, person_id)
+
+
+def _rebuild_person_profiles(database_path: Path, person_id: str) -> None:
+    with connect(database_path) as connection:
+        fingerprints = {
+            str(row["model_fingerprint"])
+            for row in connection.execute(
+                """
+                SELECT model_fingerprint FROM speaker_embeddings WHERE person_id = ?
+                UNION
+                SELECT model_fingerprint FROM speaker_profiles WHERE person_id = ?
+                """,
+                (person_id, person_id),
+            ).fetchall()
+        }
+    for fingerprint in sorted(fingerprints):
+        _rebuild_profile(database_path, person_id, fingerprint)
+
+
+def _rebuild_profile(database_path: Path, person_id: str, fingerprint: str) -> None:
+    timestamp = utc_now()
+    fingerprint_hash = hashlib.sha256(fingerprint.encode()).hexdigest()
+    profile_id = str(
+        uuid.uuid5(uuid.NAMESPACE_URL, f"speaker-profile:{person_id}:{fingerprint_hash}")
+    )
+    with connect(database_path) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        rows = connection.execute(
+            """
+            SELECT se.id, se.recording_id, sv.embedding
+            FROM speaker_embeddings AS se
+            JOIN recording_speakers AS rs
+              ON rs.recording_id = se.recording_id
+             AND rs.local_speaker_id = se.local_speaker_id
+            JOIN segments AS s
+              ON s.id = se.segment_id AND s.recording_id = se.recording_id
+            JOIN speaker_vector_keys AS keys ON keys.vector_key = se.vector_key
+            JOIN speaker_vectors AS sv ON sv.vector_id = keys.id
+            WHERE se.person_id = ? AND se.model_fingerprint = ? AND se.status = 'active'
+              AND rs.person_id = se.person_id AND rs.speaker_source = 'manual'
+              AND s.person_id = se.person_id AND s.speaker_source = 'manual'
+            ORDER BY se.created_at, se.id
+            """,
+            (person_id, fingerprint),
+        ).fetchall()
+        vectors = [_float32_values(bytes(row["embedding"])) for row in rows]
+        sample_count = len(vectors)
+        recording_count = len({str(row["recording_id"]) for row in rows})
+        existing = connection.execute(
+            "SELECT vector_key, created_at FROM speaker_profiles WHERE id = ?", (profile_id,)
+        ).fetchone()
+        if existing is not None:
+            _delete_vector(connection, cast(str | None, existing["vector_key"]))
+        centroid: tuple[float, ...] | None = None
+        if sample_count >= 2:
+            try:
+                centroid = _normalized_vector(
+                    [
+                        sum(vector[index] for vector in vectors) / sample_count
+                        for index in range(512)
+                    ]
+                )
+            except SpeakerEmbeddingError:
+                centroid = None
+        eligible = centroid is not None
+        vector_key = profile_id if eligible else None
+        if centroid is not None:
+            _upsert_vector(connection, profile_id, centroid)
+        connection.execute(
+            """
+            INSERT INTO speaker_profiles(
+                id, person_id, model_fingerprint, sample_count, recording_count, status,
+                vector_store, collection_name, vector_key, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                sample_count = excluded.sample_count,
+                recording_count = excluded.recording_count,
+                status = excluded.status,
+                vector_store = excluded.vector_store,
+                collection_name = excluded.collection_name,
+                vector_key = excluded.vector_key,
+                updated_at = excluded.updated_at
+            """,
+            (
+                profile_id,
+                person_id,
+                fingerprint,
+                sample_count,
+                recording_count,
+                "eligible" if eligible else "insufficient",
+                VECTOR_STORE if eligible else None,
+                VECTOR_COLLECTION if eligible else None,
+                vector_key,
+                str(existing["created_at"]) if existing is not None else timestamp,
+                timestamp,
+            ),
+        )
+        connection.execute(
+            "DELETE FROM speaker_profile_members WHERE profile_id = ?", (profile_id,)
+        )
+        connection.executemany(
+            "INSERT INTO speaker_profile_members(profile_id, embedding_id) VALUES (?, ?)",
+            [(profile_id, str(row["id"])) for row in rows],
+        )
+        connection.commit()
+
+
+def _float32_values(value: bytes) -> tuple[float, ...]:
+    import struct
+
+    if len(value) != EMBEDDING_DIMENSION * 4:
+        raise SpeakerEmbeddingError(
+            "INVALID_SPEAKER_EMBEDDING", "stored speaker embedding has invalid dimension"
+        )
+    return tuple(struct.unpack(f"{EMBEDDING_DIMENSION}f", value))
