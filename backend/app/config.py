@@ -58,6 +58,15 @@ class Settings(BaseSettings):
     whisper_compute_type: str = Field(default="float16", validation_alias="WHISPER_COMPUTE_TYPE")
     whisper_language: str | None = Field(default=None, validation_alias="WHISPER_LANGUAGE")
     whisper_batch_size: int = Field(default=4, gt=0, validation_alias="WHISPER_BATCH_SIZE")
+    speaker_embedding_model: str = Field(
+        default="pyannote/embedding", validation_alias="SPEAKER_EMBEDDING_MODEL"
+    )
+    speaker_embedding_revision: str = Field(
+        default="main", validation_alias="SPEAKER_EMBEDDING_MODEL_REVISION"
+    )
+    speaker_embedding_device: str = Field(
+        default="cuda", validation_alias="SPEAKER_EMBEDDING_DEVICE"
+    )
     model_cache_root: Path = Field(default=Path("/models"), validation_alias="MODEL_CACHE_ROOT")
     hf_token: SecretStr | None = Field(default=None, validation_alias="HF_TOKEN")
 
@@ -112,12 +121,36 @@ class Settings(BaseSettings):
     def uses_legacy_ai_mode(self) -> bool:
         return self.ai_mode is not None and self.speech_mode is None and self.document_mode is None
 
+    @property
+    def speaker_embedding_settings_fingerprint(self) -> str:
+        import hashlib
+        import json
+
+        payload = {
+            "model": self.speaker_embedding_model,
+            "revision": self.speaker_embedding_revision,
+            "preprocessing": "mono-pcm-s16le-16khz-v1",
+        }
+        return hashlib.sha256(
+            json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+
     @field_validator("whisper_language", mode="before")
     @classmethod
     def normalize_whisper_language(cls, value: object) -> object:
         if isinstance(value, str):
             return value.strip() or None
         return value
+
+    @field_validator(
+        "speaker_embedding_model", "speaker_embedding_revision", "speaker_embedding_device"
+    )
+    @classmethod
+    def validate_speaker_embedding_setting(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("speaker embedding settings must not be empty")
+        return normalized
 
     @model_validator(mode="after")
     def validate_environment(self) -> Self:

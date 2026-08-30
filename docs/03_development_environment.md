@@ -27,6 +27,8 @@
 
 - `HF_TOKEN`은 사용자가 이미 준비했으며 사용자가 관리한다.
 - `pyannote/speaker-diarization-community-1` 사용 조건은 사용자가 승인했다.
+- R6 화자 embedding은 별도 gated 모델인 `pyannote/embedding`을 사용하므로 실제 검증 전에 해당
+  모델의 사용 조건도 같은 계정에서 승인해야 한다.
 - 실제 값은 `.env` 또는 배포 환경의 프로세스 환경 변수로만 전달한다.
 - `.env`는 Git 추적에서 제외한다.
 - 애플리케이션 설정과 로그는 토큰 값을 출력하지 않는다.

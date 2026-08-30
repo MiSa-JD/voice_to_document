@@ -37,6 +37,12 @@ from app.retranscriptions import commit_retranscription, request_for_job
 from app.runtime import PermanentJobError, RetryableJobError
 from app.schema import Classification, MeetingSummary, RecordingStatus, Segment, Transcript
 from app.speaker_clips import generate_speaker_clips
+from app.speaker_embeddings import (
+    FakeSpeakerEmbeddingAdapter,
+    SpeakerEmbeddingAdapter,
+    SpeakerEmbeddingError,
+    finalize_speaker_embeddings,
+)
 from app.state import enqueue_job, transition_and_enqueue, transition_recording
 
 
@@ -80,6 +86,7 @@ class FakePipelineHandler:
         logger: logging.Logger,
         adapters: FakeAdapters | None = None,
         classification_adapter: ClassificationAdapter | None = None,
+        speaker_embedding_adapter: SpeakerEmbeddingAdapter | None = None,
         markdown_renderer: Callable[[Transcript], bytes] = render_transcript_markdown,
     ) -> None:
         self.settings = settings
@@ -95,6 +102,7 @@ class FakePipelineHandler:
                 max_context_chars=settings.classification_context_max_chars,
             )
         self.classification_adapter = classification_adapter
+        self.speaker_embedding_adapter = speaker_embedding_adapter or FakeSpeakerEmbeddingAdapter()
         self.markdown_renderer = markdown_renderer
 
     def _fake_classification_response(self, content_sha256: str) -> object:
@@ -109,6 +117,22 @@ class FakePipelineHandler:
             }
 
     def __call__(self, job: Job) -> None:
+        if job.kind == "finalize_speakers":
+            try:
+                finalize_speaker_embeddings(
+                    self.settings, job.recording_id, self.speaker_embedding_adapter
+                )
+            except SpeakerEmbeddingError as error:
+                if error.code in {
+                    "SPEAKER_EMBEDDING_SOURCE_CHANGED",
+                    "SPEAKER_CLIP_NOT_AVAILABLE",
+                    "SPEAKER_EMBEDDING_MODEL_LOAD_FAILED",
+                    "MODEL_DOWNLOAD_FAILED",
+                    "SPEAKER_EMBEDDING_FAILED",
+                }:
+                    raise RetryableJobError(error.code, str(error)) from error
+                raise PermanentJobError(error.code, str(error)) from error
+            return
         if job.kind == "render":
             try:
                 self._render(job)

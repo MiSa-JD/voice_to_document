@@ -28,6 +28,7 @@ from app.pipeline import FakePipelineHandler
 from app.retranscriptions import commit_retranscription, request_for_job
 from app.runtime import PermanentJobError, RetryableJobError
 from app.schema import RecordingStatus, Segment, SpeechModelFingerprints, Transcript
+from app.speaker_embeddings import PyannoteSpeakerEmbeddingAdapter, SpeakerEmbeddingAdapter
 from app.speech_failures import speech_failure_policy
 from app.state import transition_recording
 from app.transcription import (
@@ -85,10 +86,21 @@ class RealSpeechPipelineHandler(FakePipelineHandler):
         transcription_adapter: TranscriptionAdapter | None = None,
         alignment_adapter: AlignmentAdapter | None = None,
         diarization_adapter: DiarizationAdapter | None = None,
+        speaker_embedding_adapter: SpeakerEmbeddingAdapter | None = None,
         continue_to_documents: bool = True,
     ) -> None:
         # Fake document adapters remain available after R5 speaker review is implemented.
         super().__init__(settings, logger)
+        self.speaker_embedding_adapter = (
+            speaker_embedding_adapter
+            or PyannoteSpeakerEmbeddingAdapter(
+                model=settings.speaker_embedding_model,
+                revision=settings.speaker_embedding_revision,
+                device=settings.speaker_embedding_device,
+                model_cache_root=settings.model_cache_root,
+                hf_token=settings.hf_token,
+            )
+        )
         self.transcription_adapter = transcription_adapter or WhisperXAdapter(
             WhisperXConfig(
                 model=settings.whisper_model,

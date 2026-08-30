@@ -237,4 +237,5 @@ def test_speaker_edit_rerenders_without_retranscription_and_refreshes_summary(
     assert "검토자" in next(settings.document_root.glob("*.md")).read_text()
 
     assert process_one_job(settings.database_path, handler, logging.getLogger("test"))
+    assert process_one_job(settings.database_path, handler, logging.getLogger("test"))
     assert client.get(f"/api/recordings/{recording_id}").json()["summary"] is not None

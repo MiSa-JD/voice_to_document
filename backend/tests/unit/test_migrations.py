@@ -33,6 +33,10 @@ def test_empty_database_migrates_to_current_schema(tmp_path: Path) -> None:
         "recording_speakers",
         "speaker_embeddings",
         "speaker_clips",
+        "speaker_vector_keys",
+        "speaker_vectors",
+        "speaker_profiles",
+        "speaker_profile_members",
     } <= tables
     assert version == CURRENT_SCHEMA_VERSION
     assert foreign_keys == 1

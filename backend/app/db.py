@@ -5,7 +5,9 @@ import time
 from datetime import UTC, datetime
 from pathlib import Path
 
-CURRENT_SCHEMA_VERSION = 7
+import sqlite_vec  # type: ignore[import-untyped]
+
+CURRENT_SCHEMA_VERSION = 9
 
 
 class FutureSchemaError(RuntimeError):
@@ -403,6 +405,65 @@ MIGRATIONS: dict[int, tuple[str, ...]] = {
         ON retranscription_requests(recording_id, created_at DESC)
         """,
     ),
+    8: (
+        """
+        CREATE TABLE speaker_vector_keys (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            vector_key TEXT NOT NULL UNIQUE CHECK (length(trim(vector_key)) > 0)
+        )
+        """,
+        """
+        CREATE VIRTUAL TABLE speaker_vectors USING vec0(
+            vector_id INTEGER PRIMARY KEY,
+            embedding FLOAT[512] distance_metric=cosine
+        )
+        """,
+    ),
+    9: (
+        """
+        CREATE TABLE speaker_profiles (
+            id TEXT PRIMARY KEY,
+            person_id TEXT NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
+            model_fingerprint TEXT NOT NULL CHECK (length(trim(model_fingerprint)) > 0),
+            sample_count INTEGER NOT NULL CHECK (sample_count >= 0),
+            recording_count INTEGER NOT NULL CHECK (
+                recording_count >= 0 AND recording_count <= sample_count
+            ),
+            status TEXT NOT NULL CHECK (status IN ('eligible', 'insufficient')),
+            vector_store TEXT,
+            collection_name TEXT,
+            vector_key TEXT UNIQUE,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE(person_id, model_fingerprint),
+            CHECK (
+                (
+                    status = 'eligible' AND sample_count >= 2
+                    AND vector_store IS NOT NULL AND collection_name IS NOT NULL
+                    AND vector_key IS NOT NULL
+                ) OR (
+                    status = 'insufficient'
+                    AND vector_store IS NULL AND collection_name IS NULL AND vector_key IS NULL
+                )
+            )
+        )
+        """,
+        """
+        CREATE INDEX speaker_profiles_person_status
+        ON speaker_profiles(person_id, status, model_fingerprint)
+        """,
+        """
+        CREATE TABLE speaker_profile_members (
+            profile_id TEXT NOT NULL REFERENCES speaker_profiles(id) ON DELETE CASCADE,
+            embedding_id TEXT NOT NULL REFERENCES speaker_embeddings(id) ON DELETE CASCADE,
+            PRIMARY KEY (profile_id, embedding_id)
+        )
+        """,
+        """
+        CREATE INDEX speaker_profile_members_embedding
+        ON speaker_profile_members(embedding_id, profile_id)
+        """,
+    ),
 }
 
 
@@ -411,6 +472,9 @@ def connect(database_path: Path) -> sqlite3.Connection:
         connection = sqlite3.connect(database_path, timeout=5)
         connection.row_factory = sqlite3.Row
         try:
+            connection.enable_load_extension(True)
+            sqlite_vec.load(connection)
+            connection.enable_load_extension(False)
             connection.execute("PRAGMA foreign_keys = ON")
             connection.execute("PRAGMA busy_timeout = 5000")
             journal_mode = str(connection.execute("PRAGMA journal_mode").fetchone()[0])
