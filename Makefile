@@ -3,7 +3,7 @@ NPM := npm --prefix frontend
 UV_PROJECT_ENVIRONMENT := $(CURDIR)/.venv
 export UV_PROJECT_ENVIRONMENT
 
-.PHONY: install runtime-dirs check-format lint typecheck api-schema api-schema-check test-unit test-frontend test-integration test-stt-markdown-e2e test-e2e test compose-smoke model-smoke transcription-smoke alignment-smoke diarization-smoke model-eval
+.PHONY: install runtime-dirs check-format lint typecheck api-schema api-schema-check test-unit test-frontend test-integration test-stt-markdown-e2e test-e2e test compose-smoke classification-eval classification-e2e model-smoke transcription-smoke alignment-smoke diarization-smoke model-eval
 
 install:
 	$(UV) sync --frozen
@@ -52,6 +52,18 @@ test: test-unit test-frontend test-integration
 
 compose-smoke:
 	./scripts/compose-smoke.sh
+
+classification-eval: runtime-dirs
+	@set -eu; \
+	eval_project="voice-to-document-classification-eval-$$$$"; \
+	cleanup() { \
+		COMPOSE_PROJECT_NAME="$$eval_project" docker compose down --remove-orphans >/dev/null 2>&1 || true; \
+	}; \
+	trap cleanup EXIT HUP INT TERM; \
+	COMPOSE_PROJECT_NAME="$$eval_project" docker compose --profile classification-eval run --build --rm classification-eval
+
+classification-e2e:
+	./scripts/classification-e2e.sh
 
 model-smoke: runtime-dirs
 	@set -eu; \

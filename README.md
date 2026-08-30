@@ -31,6 +31,8 @@ make test-integration
 make test-e2e
 make test
 make compose-smoke
+make classification-eval
+make classification-e2e
 make model-smoke
 make transcription-smoke
 make alignment-smoke
@@ -47,6 +49,15 @@ worker 경로와 batch size 후보를 평가합니다.
 다운로드 때문에 오래 걸리며 `MODEL_CACHE_ROOT` cache를 이후 실행에서 재사용합니다. 출력 JSON은
 GPU/driver/CUDA, 모델 fingerprint, 감지 언어, segment 수, 처리 시간, cache 사용량과 관찰된 최대
 GPU 메모리만 포함하고 transcript 전문, 원본 경로, `HF_TOKEN`은 포함하지 않습니다.
+
+`make classification-eval`은 Git에 포함된 비민감 한국어 합성 transcript 5종을 고정된
+`gpt-5.4-nano-2026-03-17` snapshot으로 실제 분류합니다. `.env`에 유효한 `LLM_API_KEY`가
+필요하고 OpenAI API 비용과 네트워크 통신이 발생하지만 GPU는 사용하지 않습니다. 출력에는
+case ID, 기대/실제 범주, 성공 여부, model·prompt/schema fingerprint와 합계만 포함하며
+transcript 본문, API key, 공급자 원문 응답은 포함하지 않습니다.
+`make classification-e2e`는 별도의 임시 Compose stack에서 fake speech와 실제 OpenAI document
+분류를 연결하고, 브라우저에서 자동 범주 확인→수동 범주 수정→revision 2 JSON/Markdown/UI 일치를
+검증한 뒤 임시 데이터와 container를 정리합니다.
 
 `make alignment-smoke`는 같은 표준화·실제 전사 흐름 뒤에 감지 언어용 WhisperX alignment
 모델을 로드해 단어 시간을 보정합니다. 출력 JSON에는 전사·정렬 fingerprint, 언어, segment와

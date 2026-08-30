@@ -1,0 +1,46 @@
+[
+  {
+    "case_id": "lecture-concepts-qa",
+    "expected_category": "강의",
+    "segments": [
+      {"start_ms": 0, "end_ms": 12000, "speaker": "SPEAKER_00", "text": "오늘은 확률변수의 기댓값을 정의하고 동전 던지기 예제로 계산 과정을 설명하겠습니다."},
+      {"start_ms": 12000, "end_ms": 22000, "speaker": "SPEAKER_01", "text": "표본이 많아지면 평균이 기댓값에 가까워진다는 뜻인가요?"},
+      {"start_ms": 22000, "end_ms": 35000, "speaker": "SPEAKER_00", "text": "네. 그것이 큰 수의 법칙의 핵심이며 다음 식으로 확인할 수 있습니다."}
+    ]
+  },
+  {
+    "case_id": "daily-meal-weekend",
+    "expected_category": "일상 대화",
+    "segments": [
+      {"start_ms": 0, "end_ms": 8000, "speaker": "SPEAKER_00", "text": "오늘 저녁은 집에서 국수를 먹을까?"},
+      {"start_ms": 8000, "end_ms": 16000, "speaker": "SPEAKER_01", "text": "좋아. 토요일에는 공원에 갔다가 장도 보자."},
+      {"start_ms": 16000, "end_ms": 23000, "speaker": "SPEAKER_00", "text": "비가 오면 그냥 집에서 영화 보자."}
+    ]
+  },
+  {
+    "case_id": "meeting-decisions-actions",
+    "expected_category": "회의",
+    "segments": [
+      {"start_ms": 0, "end_ms": 10000, "speaker": "SPEAKER_00", "text": "오늘 안건은 새 사용자 안내 화면의 출시 일정입니다."},
+      {"start_ms": 10000, "end_ms": 21000, "speaker": "SPEAKER_01", "text": "출시는 다음 주 수요일로 결정하고, 저는 문구 최종안을 월요일까지 준비하겠습니다."},
+      {"start_ms": 21000, "end_ms": 30000, "speaker": "SPEAKER_00", "text": "디자인 검수는 민지가 화요일 오전까지 맡는 것으로 정리하겠습니다."}
+    ]
+  },
+  {
+    "case_id": "game-priority-list",
+    "expected_category": "게임 목록",
+    "segments": [
+      {"start_ms": 0, "end_ms": 9000, "speaker": "SPEAKER_00", "text": "이번 달 플레이 목록을 정리한다. 1순위는 하데스, 2순위는 디스코 엘리시움이다."},
+      {"start_ms": 9000, "end_ms": 17000, "speaker": "SPEAKER_00", "text": "발더스 게이트 3는 시간이 많이 필요하니 주말용으로 남기고, 짧은 세션에는 슬레이 더 스파이어를 한다."}
+    ]
+  },
+  {
+    "case_id": "other-equipment-check",
+    "expected_category": "기타",
+    "segments": [
+      {"start_ms": 0, "end_ms": 7000, "speaker": "SPEAKER_00", "text": "녹음 장비 점검 기록. 마이크 입력 채널 정상."},
+      {"start_ms": 7000, "end_ms": 14000, "speaker": "SPEAKER_00", "text": "배터리 잔량 82퍼센트, 저장 공간 48기가바이트."},
+      {"start_ms": 14000, "end_ms": 20000, "speaker": "SPEAKER_00", "text": "케이블 잡음 없음. 점검 종료."}
+    ]
+  }
+]

@@ -37,6 +37,24 @@ x-backend-volumes: &backend-read-volumes
   - ${DATA_ROOT:-./runtime}/app:${APP_DATA_DIR:-/data/app}
 
 services:
+  classification-eval:
+    profiles: ["classification-eval"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    command: ["python", "-m", "app.classification_eval"]
+    environment:
+      <<: *backend-environment
+      SERVICE_NAME: test
+      DOCUMENT_MODE: real
+      LLM_PROVIDER: openai_compatible
+      LLM_BASE_URL: https://api.openai.com/v1
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_MODEL: gpt-5.4-nano-2026-03-17
+    user: "${APP_RUN_UID:-1000}:${APP_RUN_GID:-1000}"
+    volumes: *backend-read-volumes
+
   api:
     build:
       context: .
