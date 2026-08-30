@@ -99,6 +99,7 @@ class WhisperXRuntime(Protocol):
         *,
         compute_type: str,
         language: str | None,
+        asr_options: dict[str, object] | None,
         download_root: str,
         use_auth_token: str | None,
     ) -> WhisperXModel: ...
@@ -135,15 +136,13 @@ class WhisperXAdapter:
         initial_prompt: str | None = None,
     ) -> TranscriptionResult:
         effective_language = language or self._config.language
-        model = self._get_model(effective_language)
+        model = self._get_model(effective_language, initial_prompt)
         assert self._runtime is not None
         try:
             audio = self._runtime.load_audio(str(normalized_wav))
             options: dict[str, object] = {}
             if language is not None:
                 options["language"] = language
-            if initial_prompt is not None:
-                options["initial_prompt"] = initial_prompt
             raw_result = model.transcribe(audio, batch_size=self._config.batch_size, **options)
         except Exception as error:
             if _is_out_of_memory(error):
@@ -163,8 +162,8 @@ class WhisperXAdapter:
             model_fingerprint=self._fingerprint(effective_language),
         )
 
-    def _get_model(self, language: str | None) -> WhisperXModel:
-        use_cached = language == self._config.language
+    def _get_model(self, language: str | None, initial_prompt: str | None) -> WhisperXModel:
+        use_cached = language == self._config.language and initial_prompt is None
         if use_cached and self._model is not None:
             return self._model
         try:
@@ -177,6 +176,9 @@ class WhisperXAdapter:
                 self._config.device,
                 compute_type=self._config.compute_type,
                 language=language,
+                asr_options=(
+                    {"initial_prompt": initial_prompt} if initial_prompt is not None else None
+                ),
                 download_root=str(self._config.model_cache_root),
                 use_auth_token=(
                     self._hf_token.get_secret_value() if self._hf_token is not None else None
