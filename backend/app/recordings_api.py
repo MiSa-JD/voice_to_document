@@ -96,6 +96,36 @@ class JobResponse(BaseModel):
     updated_at: str
 
 
+SpeakerMatchDecision = Literal[
+    "insufficient_clips",
+    "no_profiles",
+    "insufficient_profiles",
+    "auto_disabled",
+    "below_threshold",
+    "insufficient_margin",
+    "duplicate_person",
+    "rejected_candidate",
+    "auto_matched",
+]
+
+
+class SpeakerMatchCandidateResponse(BaseModel):
+    person_id: str
+    display_name: str
+    rank: int
+    score: float
+    rejected: bool
+
+
+class SpeakerMatchResponse(BaseModel):
+    decision: SpeakerMatchDecision
+    best_score: float
+    second_best_score: float
+    margin: float
+    input_revision: int
+    candidates: list[SpeakerMatchCandidateResponse]
+
+
 class RecordingSpeakerResponse(BaseModel):
     local_speaker_id: str
     person_id: str | None
@@ -109,6 +139,7 @@ class RecordingSpeakerResponse(BaseModel):
     representative_clip_artifact_id: str | None
     representative_clip_start_ms: int | None
     representative_clip_end_ms: int | None
+    match: SpeakerMatchResponse | None = None
 
 
 class RecordingDetailResponse(BaseModel):
@@ -239,6 +270,28 @@ def create_recordings_router(settings: Settings) -> APIRouter:
                 """,
                 (recording_id,),
             ).fetchall()
+            match_rows = connection.execute(
+                """
+                SELECT local_speaker_id, decision, best_score, second_best_score,
+                       margin, input_revision
+                FROM speaker_match_results
+                WHERE recording_id = ?
+                ORDER BY local_speaker_id
+                """,
+                (recording_id,),
+            ).fetchall()
+            candidate_rows = connection.execute(
+                """
+                SELECT candidates.local_speaker_id, candidates.person_id,
+                       persons.display_name, candidates.rank, candidates.score,
+                       candidates.rejected
+                FROM speaker_match_candidates AS candidates
+                JOIN persons ON persons.id = candidates.person_id
+                WHERE candidates.recording_id = ?
+                ORDER BY candidates.local_speaker_id, candidates.rank
+                """,
+                (recording_id,),
+            ).fetchall()
             artifacts = connection.execute(
                 """
                 SELECT id, kind, relative_path, content_sha256, schema_version,
@@ -255,9 +308,32 @@ def create_recordings_router(settings: Settings) -> APIRouter:
                 """,
                 (recording_id,),
             ).fetchall()
+        candidates_by_speaker: dict[str, list[SpeakerMatchCandidateResponse]] = {}
+        for candidate in candidate_rows:
+            value = dict(candidate)
+            value["rejected"] = bool(value["rejected"])
+            candidates_by_speaker.setdefault(str(candidate["local_speaker_id"]), []).append(
+                SpeakerMatchCandidateResponse.model_validate(value)
+            )
+        matches = {
+            str(row["local_speaker_id"]): SpeakerMatchResponse(
+                decision=row["decision"],
+                best_score=row["best_score"],
+                second_best_score=row["second_best_score"],
+                margin=row["margin"],
+                input_revision=row["input_revision"],
+                candidates=candidates_by_speaker.get(str(row["local_speaker_id"]), []),
+            )
+            for row in match_rows
+        }
+        speaker_responses = []
+        for row in speakers:
+            value = dict(row)
+            value["match"] = matches.get(str(row["local_speaker_id"]))
+            speaker_responses.append(RecordingSpeakerResponse.model_validate(value))
         return RecordingDetailResponse(
             recording=_recording_item(dict(recording)),
-            speakers=[RecordingSpeakerResponse.model_validate(dict(row)) for row in speakers],
+            speakers=speaker_responses,
             segments=[_segment_response(dict(row)) for row in segments],
             artifacts=[ArtifactResponse.model_validate(dict(row)) for row in artifacts],
             jobs=[JobResponse.model_validate(dict(row)) for row in jobs],

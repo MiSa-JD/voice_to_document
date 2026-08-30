@@ -242,6 +242,47 @@ def test_explicit_unknown_is_manual_and_clears_score(settings_values: dict[str, 
     assert dict(segment) == expected
 
 
+def test_changing_auto_match_records_rejection_without_private_content(
+    settings_values: dict[str, Any],
+) -> None:
+    client, settings = _client(settings_values)
+    recording_id, _segment_ids = _seed_recording(settings)
+    person = _create_person(client)
+    with connect(settings.database_path) as connection:
+        connection.execute(
+            """
+            UPDATE recording_speakers SET person_id = ?, speaker_source = 'auto'
+            WHERE recording_id = ? AND local_speaker_id = 'SPEAKER_00'
+            """,
+            (person["id"], recording_id),
+        )
+        connection.execute(
+            """
+            INSERT INTO speaker_match_results(
+                recording_id, local_speaker_id, input_revision, model_fingerprint,
+                decision, best_score, second_best_score, margin, updated_at
+            ) VALUES (?, 'SPEAKER_00', 1, 'model:v1', 'auto_matched', 0.95, 0.2, 0.75, ?)
+            """,
+            (recording_id, utc_now()),
+        )
+
+    response = client.put(
+        f"/api/recordings/{recording_id}/speakers/SPEAKER_00",
+        json={"person_id": None, "expected_revision": 1},
+    )
+
+    assert response.status_code == 200
+    with connect(settings.database_path) as connection:
+        rejection = connection.execute(
+            """
+            SELECT person_id, model_fingerprint FROM speaker_match_rejections
+            WHERE recording_id = ? AND local_speaker_id = 'SPEAKER_00'
+            """,
+            (recording_id,),
+        ).fetchone()
+    assert dict(rejection) == {"person_id": person["id"], "model_fingerprint": "model:v1"}
+
+
 def test_individual_segment_assignment_preserves_diarization_fields(
     settings_values: dict[str, Any],
 ) -> None:

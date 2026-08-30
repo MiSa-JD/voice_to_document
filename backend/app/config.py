@@ -67,6 +67,15 @@ class Settings(BaseSettings):
     speaker_embedding_device: str = Field(
         default="cuda", validation_alias="SPEAKER_EMBEDDING_DEVICE"
     )
+    speaker_auto_match_enabled: bool = Field(
+        default=False, validation_alias="SPEAKER_AUTO_MATCH_ENABLED"
+    )
+    speaker_auto_match_threshold: float | None = Field(
+        default=None, ge=0.0, le=1.0, validation_alias="SPEAKER_AUTO_MATCH_THRESHOLD"
+    )
+    speaker_match_margin: float | None = Field(
+        default=None, ge=0.0, le=1.0, validation_alias="SPEAKER_MATCH_MARGIN"
+    )
     model_cache_root: Path = Field(default=Path("/models"), validation_alias="MODEL_CACHE_ROOT")
     hf_token: SecretStr | None = Field(default=None, validation_alias="HF_TOKEN")
 
@@ -135,11 +144,33 @@ class Settings(BaseSettings):
             json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
         ).hexdigest()
 
+    @property
+    def speaker_finalization_settings_fingerprint(self) -> str:
+        import hashlib
+        import json
+
+        payload = {
+            "embedding": self.speaker_embedding_settings_fingerprint,
+            "auto_match_enabled": self.speaker_auto_match_enabled,
+            "threshold": self.speaker_auto_match_threshold,
+            "margin": self.speaker_match_margin,
+        }
+        return hashlib.sha256(
+            json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+
     @field_validator("whisper_language", mode="before")
     @classmethod
     def normalize_whisper_language(cls, value: object) -> object:
         if isinstance(value, str):
             return value.strip() or None
+        return value
+
+    @field_validator("speaker_auto_match_threshold", "speaker_match_margin", mode="before")
+    @classmethod
+    def normalize_optional_score(cls, value: object) -> object:
+        if isinstance(value, str) and not value.strip():
+            return None
         return value
 
     @field_validator(
@@ -194,6 +225,14 @@ class Settings(BaseSettings):
             raise ValueError(
                 "AUTO_SUMMARY_CATEGORIES contains values not present in CATEGORIES: "
                 + ", ".join(sorted(unknown))
+            )
+
+        if self.speaker_auto_match_enabled and (
+            self.speaker_auto_match_threshold is None or self.speaker_match_margin is None
+        ):
+            raise ValueError(
+                "SPEAKER_AUTO_MATCH_ENABLED=true requires: "
+                "SPEAKER_AUTO_MATCH_THRESHOLD, SPEAKER_MATCH_MARGIN"
             )
 
         uses_real_speech_runtime = (

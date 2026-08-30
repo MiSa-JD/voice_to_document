@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import logging
 import shutil
+import uuid
 from pathlib import Path
 from typing import Any
 
 from app.adapters import FakeAdapters
 from app.api import create_app
 from app.config import Settings
-from app.db import connect
+from app.db import connect, utc_now
 from app.ingest import ingest_file
 from app.pipeline import FakePipelineHandler
 from app.runtime import process_one_job
@@ -74,6 +75,16 @@ def test_fake_retranscription_swaps_atomically_preserves_history_and_clears_hint
 ) -> None:
     settings = Settings(**settings_values)
     client, recording_id = _completed(settings)
+    person = client.post("/api/persons", json={"display_name": "검토자"}).json()
+    with connect(settings.database_path) as connection:
+        connection.execute(
+            """
+            INSERT INTO speaker_match_rejections(
+                id, recording_id, local_speaker_id, person_id, model_fingerprint, created_at
+            ) VALUES (?, ?, 'SPEAKER_00', ?, 'model:v1', ?)
+            """,
+            (str(uuid.uuid4()), recording_id, person["id"], utc_now()),
+        )
     accepted = client.post(f"/api/recordings/{recording_id}/retranscriptions", json=_request())
     handler = FakePipelineHandler(settings, logging.getLogger("test"))
 
@@ -112,9 +123,14 @@ def test_fake_retranscription_swaps_atomically_preserves_history_and_clears_hint
                 (recording_id,),
             ).fetchall()
         }
+        rejection_count = connection.execute(
+            "SELECT COUNT(*) FROM speaker_match_rejections WHERE recording_id = ?",
+            (recording_id,),
+        ).fetchone()[0]
     assert dict(recording) == {"revision": 2, "category": None, "needs_speaker_review": 1}
     assert dict(request_row) == {"content_hint": None, "terms_json": None}
     assert artifact_revisions == {1, 2}
+    assert rejection_count == 1
     history = settings.app_data_dir / "history" / recording_id / "1"
     assert (history / "transcript_json.json").is_file()
     assert (history / "transcript_markdown.md").is_file()

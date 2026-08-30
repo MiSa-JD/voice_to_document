@@ -132,7 +132,7 @@ def commit_retranscription(
             connection.execute(
                 """
                 UPDATE recordings
-                SET revision = ?, status = 'CLASSIFYING', category = NULL,
+                SET revision = ?, status = 'TRANSCRIBING', category = NULL,
                     category_confidence = NULL, category_reason = NULL,
                     needs_speaker_review = 1, last_error_code = NULL,
                     last_error_message = NULL, updated_at = ?
@@ -157,22 +157,22 @@ def commit_retranscription(
                     timestamp,
                 ),
             )
-            classify_job_id = str(uuid.uuid4())
+            finalization_job_id = str(uuid.uuid4())
             connection.execute(
                 """
                 INSERT INTO jobs(
                     id, recording_id, kind, status, attempts, available_at,
                     created_at, updated_at, input_revision, settings_fingerprint
-                ) VALUES (?, ?, 'classify', 'queued', 0, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, 'finalize_speakers', 'queued', 0, ?, ?, ?, ?, ?)
                 """,
                 (
-                    classify_job_id,
+                    finalization_job_id,
                     recording_id,
                     timestamp,
                     timestamp,
                     timestamp,
                     transcript.revision,
-                    "retranscription-classify-v1",
+                    settings.speaker_finalization_settings_fingerprint,
                 ),
             )
             connection.execute(

@@ -39,6 +39,7 @@ def test_complete_fixture_reaches_completed_with_revision_matched_artifacts(
     assert dict(recording) == {"status": "COMPLETED", "category": "회의"}
     assert [dict(job) for job in jobs] == [
         {"kind": "transcribe", "status": "succeeded"},
+        {"kind": "finalize_speakers", "status": "succeeded"},
         {"kind": "classify", "status": "succeeded"},
     ]
     assert [row["kind"] for row in artifacts] == [
@@ -88,6 +89,7 @@ def test_review_fixture_keeps_flag_but_generates_temporary_speaker_markdown(
     assert dict(recording) == {"status": "COMPLETED", "needs_speaker_review": 1}
     assert [dict(row) for row in jobs] == [
         {"kind": "transcribe", "status": "succeeded"},
+        {"kind": "finalize_speakers", "status": "succeeded"},
         {"kind": "classify", "status": "succeeded"},
     ]
     markdown = (settings.document_root / artifact["relative_path"]).read_text()

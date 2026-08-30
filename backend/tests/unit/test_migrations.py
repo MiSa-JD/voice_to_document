@@ -37,9 +37,49 @@ def test_empty_database_migrates_to_current_schema(tmp_path: Path) -> None:
         "speaker_vectors",
         "speaker_profiles",
         "speaker_profile_members",
+        "speaker_match_results",
+        "speaker_match_candidates",
+        "speaker_match_rejections",
     } <= tables
     assert version == CURRENT_SCHEMA_VERSION
     assert foreign_keys == 1
+
+
+def test_version_nine_data_is_preserved_when_match_tables_are_added(tmp_path: Path) -> None:
+    database_path = tmp_path / "app.db"
+    with connect(database_path) as connection:
+        connection.execute(
+            "CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)"
+        )
+        for version in range(1, 10):
+            for statement in MIGRATIONS[version]:
+                connection.execute(statement)
+            connection.execute(
+                "INSERT INTO schema_migrations(version, applied_at) VALUES (?, 'now')", (version,)
+            )
+        _insert_recording(connection)
+        connection.execute(
+            """
+            INSERT INTO recording_speakers(
+                recording_id, local_speaker_id, revision, created_at, updated_at
+            ) VALUES ('recording', 'SPEAKER_00', 1, 'now', 'now')
+            """
+        )
+
+    migrate_database(database_path)
+
+    with connect(database_path) as connection:
+        speaker = connection.execute(
+            "SELECT local_speaker_id, speaker_source FROM recording_speakers"
+        ).fetchone()
+        result_count = connection.execute("SELECT COUNT(*) FROM speaker_match_results").fetchone()[
+            0
+        ]
+    assert dict(speaker) == {
+        "local_speaker_id": "SPEAKER_00",
+        "speaker_source": "unresolved",
+    }
+    assert result_count == 0
 
 
 def test_migration_is_safe_to_run_twice(tmp_path: Path) -> None:

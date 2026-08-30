@@ -147,6 +147,29 @@ def test_rejects_non_positive_whisper_batch_size(settings_values: dict[str, Any]
         Settings(**settings_values)
 
 
+def test_auto_match_defaults_to_candidate_only_mode(settings_values: dict[str, Any]) -> None:
+    settings = Settings(**settings_values)
+
+    assert settings.speaker_auto_match_enabled is False
+    assert settings.speaker_auto_match_threshold is None
+    assert settings.speaker_match_margin is None
+    assert settings.speaker_finalization_settings_fingerprint
+
+
+def test_auto_match_requires_both_bounded_scores(settings_values: dict[str, Any]) -> None:
+    settings_values["SPEAKER_AUTO_MATCH_ENABLED"] = True
+
+    with pytest.raises(ValidationError, match="SPEAKER_AUTO_MATCH_THRESHOLD"):
+        Settings(**settings_values)
+
+    settings_values.update({"SPEAKER_AUTO_MATCH_THRESHOLD": 0.8, "SPEAKER_MATCH_MARGIN": 0.1})
+    assert Settings(**settings_values).speaker_auto_match_enabled is True
+
+    settings_values["SPEAKER_MATCH_MARGIN"] = 1.1
+    with pytest.raises(ValidationError, match="SPEAKER_MATCH_MARGIN"):
+        Settings(**settings_values)
+
+
 @pytest.mark.parametrize("value", [Path("relative/cache"), Path("/missing-model-cache")])
 def test_real_speech_validates_model_cache_root(
     settings_values: dict[str, Any],

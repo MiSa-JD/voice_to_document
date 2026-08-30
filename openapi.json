@@ -640,6 +640,16 @@
             "title": "Local Speaker Id",
             "type": "string"
           },
+          "match": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SpeakerMatchResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "person_id": {
             "anyOf": [
               {
@@ -1224,6 +1234,91 @@
           "render_job"
         ],
         "title": "SpeakerAssignmentResponse",
+        "type": "object"
+      },
+      "SpeakerMatchCandidateResponse": {
+        "properties": {
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "person_id": {
+            "title": "Person Id",
+            "type": "string"
+          },
+          "rank": {
+            "title": "Rank",
+            "type": "integer"
+          },
+          "rejected": {
+            "title": "Rejected",
+            "type": "boolean"
+          },
+          "score": {
+            "title": "Score",
+            "type": "number"
+          }
+        },
+        "required": [
+          "person_id",
+          "display_name",
+          "rank",
+          "score",
+          "rejected"
+        ],
+        "title": "SpeakerMatchCandidateResponse",
+        "type": "object"
+      },
+      "SpeakerMatchResponse": {
+        "properties": {
+          "best_score": {
+            "title": "Best Score",
+            "type": "number"
+          },
+          "candidates": {
+            "items": {
+              "$ref": "#/components/schemas/SpeakerMatchCandidateResponse"
+            },
+            "title": "Candidates",
+            "type": "array"
+          },
+          "decision": {
+            "enum": [
+              "insufficient_clips",
+              "no_profiles",
+              "insufficient_profiles",
+              "auto_disabled",
+              "below_threshold",
+              "insufficient_margin",
+              "duplicate_person",
+              "rejected_candidate",
+              "auto_matched"
+            ],
+            "title": "Decision",
+            "type": "string"
+          },
+          "input_revision": {
+            "title": "Input Revision",
+            "type": "integer"
+          },
+          "margin": {
+            "title": "Margin",
+            "type": "number"
+          },
+          "second_best_score": {
+            "title": "Second Best Score",
+            "type": "number"
+          }
+        },
+        "required": [
+          "decision",
+          "best_score",
+          "second_best_score",
+          "margin",
+          "input_revision",
+          "candidates"
+        ],
+        "title": "SpeakerMatchResponse",
         "type": "object"
       },
       "ValidationError": {
