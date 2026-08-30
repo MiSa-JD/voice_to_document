@@ -303,6 +303,7 @@ def test_real_handler_persists_classified_json_and_markdown_artifacts(
     assert "SPEAKER_00" in markdown
     assert [dict(row) for row in jobs] == [
         {"kind": "transcribe", "status": "succeeded"},
+        {"kind": "finalize_speakers", "status": "succeeded"},
         {"kind": "classify", "status": "succeeded"},
     ]
     assert source.read_bytes() == original
@@ -332,7 +333,7 @@ def test_real_handler_can_stop_at_speech_evaluation_gate(
         recording = connection.execute("SELECT status FROM recordings").fetchone()
         jobs = connection.execute("SELECT kind FROM jobs").fetchall()
     assert recording["status"] == "SPEAKER_REVIEW"
-    assert [row["kind"] for row in jobs] == ["transcribe"]
+    assert [row["kind"] for row in jobs] == ["transcribe", "finalize_speakers"]
 
 
 def test_real_handler_records_sanitized_model_failure(settings_values: dict[str, Any]) -> None:

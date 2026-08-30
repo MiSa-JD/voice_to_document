@@ -236,8 +236,12 @@ def create_speaker_review_router(settings: Settings) -> APIRouter:
             _ensure_finalize_not_running(connection, recording_id)
             speaker = connection.execute(
                 """
-                SELECT 1 FROM recording_speakers
-                WHERE recording_id = ? AND local_speaker_id = ?
+                SELECT rs.person_id, rs.speaker_source, match.model_fingerprint
+                FROM recording_speakers AS rs
+                LEFT JOIN speaker_match_results AS match
+                  ON match.recording_id = rs.recording_id
+                 AND match.local_speaker_id = rs.local_speaker_id
+                WHERE rs.recording_id = ? AND rs.local_speaker_id = ?
                 """,
                 (recording_id, local_speaker_id),
             ).fetchone()
@@ -248,6 +252,28 @@ def create_speaker_review_router(settings: Settings) -> APIRouter:
             speaker_name = _person_name(connection, request.person_id)
             new_revision = current_revision + 1
             timestamp = utc_now()
+            if (
+                speaker["speaker_source"] == "auto"
+                and speaker["person_id"] is not None
+                and speaker["person_id"] != request.person_id
+                and speaker["model_fingerprint"] is not None
+            ):
+                connection.execute(
+                    """
+                    INSERT OR IGNORE INTO speaker_match_rejections(
+                        id, recording_id, local_speaker_id, person_id,
+                        model_fingerprint, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        str(uuid.uuid4()),
+                        recording_id,
+                        local_speaker_id,
+                        speaker["person_id"],
+                        speaker["model_fingerprint"],
+                        timestamp,
+                    ),
+                )
             source_segment_ids = [
                 str(row["id"])
                 for row in connection.execute(
@@ -548,7 +574,7 @@ def _enqueue_finalize_speakers(
             """,
             (
                 revision,
-                settings.speaker_embedding_settings_fingerprint,
+                settings.speaker_finalization_settings_fingerprint,
                 timestamp,
                 timestamp,
                 queued["id"],
@@ -569,7 +595,7 @@ def _enqueue_finalize_speakers(
             timestamp,
             timestamp,
             revision,
-            settings.speaker_embedding_settings_fingerprint,
+            settings.speaker_finalization_settings_fingerprint,
         ),
     )
 

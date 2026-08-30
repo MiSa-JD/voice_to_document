@@ -193,19 +193,21 @@ class RealSpeechPipelineHandler(FakePipelineHandler):
         )
         if retranscription is not None:
             commit_retranscription(self.settings, job.id, transcript)
+            self._generate_speaker_clips(job.recording_id, source, transcript.revision)
             return
         self._replace_segments(transcript)
         self._write_transcript_json(transcript)
         self._generate_speaker_clips(job.recording_id, source, transcript.revision)
         self._set_review_required(job.recording_id)
         if self.continue_to_documents:
-            self._enqueue_classification(transcript)
+            self._enqueue_speaker_finalization(transcript)
         else:
             transition_recording(
                 self.settings.database_path,
                 job.recording_id,
                 RecordingStatus.SPEAKER_REVIEW,
             )
+            self._enqueue_speaker_finalization(transcript)
 
     def _validated_source(self, value: str) -> Path:
         try:

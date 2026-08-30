@@ -7,7 +7,7 @@ from pathlib import Path
 
 import sqlite_vec  # type: ignore[import-untyped]
 
-CURRENT_SCHEMA_VERSION = 9
+CURRENT_SCHEMA_VERSION = 10
 
 
 class FutureSchemaError(RuntimeError):
@@ -462,6 +462,68 @@ MIGRATIONS: dict[int, tuple[str, ...]] = {
         """
         CREATE INDEX speaker_profile_members_embedding
         ON speaker_profile_members(embedding_id, profile_id)
+        """,
+    ),
+    10: (
+        """
+        CREATE TABLE speaker_match_results (
+            recording_id TEXT NOT NULL,
+            local_speaker_id TEXT NOT NULL,
+            input_revision INTEGER NOT NULL CHECK (input_revision > 0),
+            model_fingerprint TEXT,
+            decision TEXT NOT NULL CHECK (decision IN (
+                'insufficient_clips', 'no_profiles', 'insufficient_profiles',
+                'auto_disabled', 'below_threshold', 'insufficient_margin',
+                'duplicate_person', 'rejected_candidate', 'auto_matched'
+            )),
+            best_score REAL NOT NULL CHECK (best_score >= 0.0 AND best_score <= 1.0),
+            second_best_score REAL NOT NULL CHECK (
+                second_best_score >= 0.0 AND second_best_score <= 1.0
+            ),
+            margin REAL NOT NULL CHECK (margin >= 0.0 AND margin <= 1.0),
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (recording_id, local_speaker_id),
+            FOREIGN KEY (recording_id, local_speaker_id)
+                REFERENCES recording_speakers(recording_id, local_speaker_id)
+                ON DELETE CASCADE
+        )
+        """,
+        """
+        CREATE INDEX speaker_match_results_revision
+        ON speaker_match_results(recording_id, input_revision, local_speaker_id)
+        """,
+        """
+        CREATE TABLE speaker_match_candidates (
+            recording_id TEXT NOT NULL,
+            local_speaker_id TEXT NOT NULL,
+            person_id TEXT NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
+            profile_id TEXT NOT NULL REFERENCES speaker_profiles(id) ON DELETE CASCADE,
+            rank INTEGER NOT NULL CHECK (rank > 0),
+            score REAL NOT NULL CHECK (score >= 0.0 AND score <= 1.0),
+            rejected INTEGER NOT NULL DEFAULT 0 CHECK (rejected IN (0, 1)),
+            PRIMARY KEY (recording_id, local_speaker_id, person_id),
+            UNIQUE (recording_id, local_speaker_id, rank),
+            FOREIGN KEY (recording_id, local_speaker_id)
+                REFERENCES speaker_match_results(recording_id, local_speaker_id)
+                ON DELETE CASCADE
+        )
+        """,
+        """
+        CREATE TABLE speaker_match_rejections (
+            id TEXT PRIMARY KEY,
+            recording_id TEXT NOT NULL REFERENCES recordings(id) ON DELETE CASCADE,
+            local_speaker_id TEXT NOT NULL,
+            person_id TEXT NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
+            model_fingerprint TEXT NOT NULL CHECK (length(trim(model_fingerprint)) > 0),
+            created_at TEXT NOT NULL,
+            UNIQUE (recording_id, local_speaker_id, person_id, model_fingerprint)
+        )
+        """,
+        """
+        CREATE INDEX speaker_match_rejections_lookup
+        ON speaker_match_rejections(
+            recording_id, local_speaker_id, model_fingerprint, person_id
+        )
         """,
     ),
 }

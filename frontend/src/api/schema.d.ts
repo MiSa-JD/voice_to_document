@@ -425,6 +425,7 @@ export interface components {
             duration_ms: number;
             /** Local Speaker Id */
             local_speaker_id: string;
+            match?: components["schemas"]["SpeakerMatchResponse"] | null;
             /** Person Id */
             person_id: string | null;
             /** Representative Clip Artifact Id */
@@ -609,6 +610,37 @@ export interface components {
             speaker_name: string | null;
             /** Updated Segment Count */
             updated_segment_count: number;
+        };
+        /** SpeakerMatchCandidateResponse */
+        SpeakerMatchCandidateResponse: {
+            /** Display Name */
+            display_name: string;
+            /** Person Id */
+            person_id: string;
+            /** Rank */
+            rank: number;
+            /** Rejected */
+            rejected: boolean;
+            /** Score */
+            score: number;
+        };
+        /** SpeakerMatchResponse */
+        SpeakerMatchResponse: {
+            /** Best Score */
+            best_score: number;
+            /** Candidates */
+            candidates: components["schemas"]["SpeakerMatchCandidateResponse"][];
+            /**
+             * Decision
+             * @enum {string}
+             */
+            decision: "insufficient_clips" | "no_profiles" | "insufficient_profiles" | "auto_disabled" | "below_threshold" | "insufficient_margin" | "duplicate_person" | "rejected_candidate" | "auto_matched";
+            /** Input Revision */
+            input_revision: number;
+            /** Margin */
+            margin: number;
+            /** Second Best Score */
+            second_best_score: number;
         };
         /** ValidationError */
         ValidationError: {

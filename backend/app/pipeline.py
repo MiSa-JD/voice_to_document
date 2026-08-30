@@ -119,8 +119,11 @@ class FakePipelineHandler:
     def __call__(self, job: Job) -> None:
         if job.kind == "finalize_speakers":
             try:
-                finalize_speaker_embeddings(
-                    self.settings, job.recording_id, self.speaker_embedding_adapter
+                result = finalize_speaker_embeddings(
+                    self.settings,
+                    job.recording_id,
+                    self.speaker_embedding_adapter,
+                    job.input_revision,
                 )
             except SpeakerEmbeddingError as error:
                 if error.code in {
@@ -132,6 +135,8 @@ class FakePipelineHandler:
                 }:
                     raise RetryableJobError(error.code, str(error)) from error
                 raise PermanentJobError(error.code, str(error)) from error
+            if not result.stale:
+                self._continue_after_speaker_finalization(job.recording_id, result.revision)
             return
         if job.kind == "render":
             try:
@@ -212,6 +217,11 @@ class FakePipelineHandler:
                 initial_prompt=retranscription.initial_prompt,
             )
             commit_retranscription(self.settings, job.id, transcript)
+            self._generate_speaker_clips(
+                job.recording_id,
+                Path(str(recording["source_path"])),
+                transcript.revision,
+            )
             return
         self._enter(job.recording_id, RecordingStatus.TRANSCRIBING)
         transcript = self.adapters.transcribe(
@@ -228,7 +238,7 @@ class FakePipelineHandler:
         )
         if transcript.needs_speaker_review:
             self._set_review_required(job.recording_id)
-        self._enqueue_classification(transcript)
+        self._enqueue_speaker_finalization(transcript)
 
     def _classify(self, job: Job) -> None:
         recording = self._recording(job.recording_id)
@@ -484,6 +494,9 @@ class FakePipelineHandler:
             )
 
     def _enqueue_classification(self, transcript: Transcript) -> None:
+        self._enqueue_classification_revision(str(transcript.recording_id), transcript.revision)
+
+    def _enqueue_classification_revision(self, recording_id: str, revision: int) -> None:
         fingerprint = hashlib.sha256(
             json.dumps(
                 self.classification_adapter.fingerprint,
@@ -493,12 +506,29 @@ class FakePipelineHandler:
         ).hexdigest()
         transition_and_enqueue(
             self.settings.database_path,
-            str(transcript.recording_id),
+            recording_id,
             RecordingStatus.CLASSIFYING,
             "classify",
-            transcript.revision,
+            revision,
             fingerprint,
         )
+
+    def _enqueue_speaker_finalization(self, transcript: Transcript) -> None:
+        enqueue_job(
+            self.settings.database_path,
+            str(transcript.recording_id),
+            "finalize_speakers",
+            transcript.revision,
+            self.settings.speaker_finalization_settings_fingerprint,
+        )
+
+    def _continue_after_speaker_finalization(self, recording_id: str, revision: int) -> None:
+        with connect(self.settings.database_path) as connection:
+            row = connection.execute(
+                "SELECT status FROM recordings WHERE id = ?", (recording_id,)
+            ).fetchone()
+        if row is not None and str(row["status"]) == RecordingStatus.TRANSCRIBING.value:
+            self._enqueue_classification_revision(recording_id, revision)
 
     def _save_classification(self, recording_id: str, classification: Classification) -> None:
         with connect(self.settings.database_path) as connection:

@@ -132,6 +132,14 @@ fingerprint끼리는 비교하지 않습니다. `pyannote/embedding` 모델 사�
 자동 확정 후보로 사용할 수 없는 `insufficient` 상태를 유지합니다. profile centroid는 빠른 후보
 검색용이며 원본 sample membership도 보존해 후속 점수 계산에서 재검증할 수 있습니다.
 
+미확정 화자에 대표 clip이 두 개 이상 있으면 같은 model fingerprint의 eligible profile 원본
+sample과 모두 비교하고, cosine similarity 중앙값으로 후보 순위를 저장합니다. 이 점수는 사용자
+검토를 돕는 유사도이며 신원 인증 결과가 아닙니다. 기본값인
+`SPEAKER_AUTO_MATCH_ENABLED=false`에서는 후보와 판정 근거만 저장하고 화자 연결은 바꾸지
+않습니다. 자동 확정을 켤 때만 보정된 `SPEAKER_AUTO_MATCH_THRESHOLD`와
+`SPEAKER_MATCH_MARGIN`을 모두 `0.0~1.0` 범위로 지정해야 합니다. 실제 음성 분포 평가 전에는
+임의의 기본 threshold를 사용하지 않습니다.
+
 GPU runtime만 검증하려면 NVIDIA driver와 NVIDIA Container Toolkit을 준비한 뒤 실행합니다.
 
 ```sh

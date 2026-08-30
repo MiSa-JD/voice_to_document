@@ -67,6 +67,7 @@ def test_legacy_uuid_markdown_is_migrated_without_stt(
     assert not legacy_path.parent.exists()
     assert [dict(row) for row in jobs] == [
         {"kind": "classify", "count": 1},
+        {"kind": "finalize_speakers", "count": 1},
         {"kind": "transcribe", "count": 1},
     ]
 

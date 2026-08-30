@@ -65,6 +65,9 @@ def test_completed_recording_list_and_detail(settings_values: dict[str, Any]) ->
     assert [speaker["duration_ms"] for speaker in payload["speakers"]] == [900, 900]
     assert all(speaker["speaker_source"] == "unresolved" for speaker in payload["speakers"])
     assert all(
+        speaker["match"]["decision"] == "insufficient_clips" for speaker in payload["speakers"]
+    )
+    assert all(
         speaker["representative_clip_artifact_id"] is None for speaker in payload["speakers"]
     )
     assert {artifact["kind"] for artifact in payload["artifacts"]} == {
@@ -73,7 +76,7 @@ def test_completed_recording_list_and_detail(settings_values: dict[str, Any]) ->
         "transcript_markdown",
     }
     assert {job["status"] for job in payload["jobs"]} == {"succeeded"}
-    assert len(payload["jobs"]) == 2
+    assert len(payload["jobs"]) == 3
     assert payload["summary"] is None
     assert "source_path" not in detail.text
     assert "relative_path" not in detail.text
