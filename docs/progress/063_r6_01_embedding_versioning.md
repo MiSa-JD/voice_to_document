@@ -35,6 +35,8 @@
 - backend unit: 303개 통과
 - backend integration: 19개 통과
 - frontend unit: 18개 통과
+- Compose/Playwright 스모크: `finalize_speakers`를 포함한 6개 job 성공과 worker 재시작 후 결과
+  보존 통과
 - 신규 검증: migration/extension 로드, 512차원과 cosine, 정규화, 멱등 vector identity, model
   fingerprint 분리, 수동·현재 source 제한, 무효화 metadata 보존, 잘못된 벡터 거부, gated 모델
   접근 오류 분류
