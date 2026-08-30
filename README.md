@@ -65,7 +65,11 @@ word 개수, 단어 시간이 생성된 segment 수, 처리 시간, cache와 GPU
 
 ## 비밀값과 개인정보
 
-실제 `.env`, Hugging Face 토큰, LLM API 키, 실제 사람의 녹음은 Git에 커밋하지 않습니다. 외부 LLM을 사용하면 transcript가 외부 서비스로 전송될 수 있으며, 공급자와 모델은 R7 전에 확정합니다.
+실제 `.env`, Hugging Face 토큰, LLM API 키, 실제 사람의 녹음은 Git에 커밋하지 않습니다.
+`DOCUMENT_MODE=fake`에서는 transcript가 외부 LLM으로 전송되지 않습니다.
+`DOCUMENT_MODE=real`에서는 분류를 위해 transcript가 설정한 OpenAI Responses API로 전송되며
+네트워크 연결과 API 사용 비용이 발생합니다. 키는 worker에만 전달하고 로그나 artifact에 남기지
+않습니다. 전송할 녹음에 대한 권한과 개인정보 처리 조건을 확인한 뒤 활성화해야 합니다.
 
 자세한 환경 변수와 Compose 실행 방법은 R1 구현과 함께 이 문서에 추가합니다.
 
@@ -115,7 +119,10 @@ HF_TOKEN=your-private-token
 ```
 
 `SPEECH_MODE=real`은 `HF_TOKEN`만 요구합니다. LLM 관련 변수는 `DOCUMENT_MODE=real`에서만
-필수입니다. `WHISPER_LANGUAGE`를 비우면 언어를 자동 감지하며 `WHISPER_BATCH_SIZE` 기본값은
+worker에 필수입니다. 실제 document 분류는 `LLM_PROVIDER=openai_compatible`,
+`LLM_BASE_URL=https://api.openai.com/v1`, `LLM_MODEL=gpt-5.4-nano-2026-03-17`과 유효한
+`LLM_API_KEY`를 사용합니다. API 서비스는 모드 표시만 하므로 키를 전달받지 않습니다.
+`WHISPER_LANGUAGE`를 비우면 언어를 자동 감지하며 `WHISPER_BATCH_SIZE` 기본값은
 RTX 3060 12GB용 보수적 시작값인 `4`입니다. 실제 speech runtime의 `MODEL_CACHE_ROOT`는 결과
 디렉터리와 겹치지 않는, 존재하고 쓰기 가능한 절대 경로여야 합니다. 기존 `AI_MODE`는 직접 실행
 호환용으로 읽지만 새 설정에서는 사용하지 않습니다.

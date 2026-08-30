@@ -15,6 +15,7 @@ from app.alignment import (
     WhisperXAlignmentAdapter,
     WhisperXAlignmentError,
 )
+from app.classification import ClassificationAdapter
 from app.config import Settings
 from app.diarization import (
     DiarizationConfig,
@@ -87,10 +88,11 @@ class RealSpeechPipelineHandler(FakePipelineHandler):
         alignment_adapter: AlignmentAdapter | None = None,
         diarization_adapter: DiarizationAdapter | None = None,
         speaker_embedding_adapter: SpeakerEmbeddingAdapter | None = None,
+        classification_adapter: ClassificationAdapter | None = None,
         continue_to_documents: bool = True,
     ) -> None:
         # Fake document adapters remain available after R5 speaker review is implemented.
-        super().__init__(settings, logger)
+        super().__init__(settings, logger, classification_adapter=classification_adapter)
         self.speaker_embedding_adapter = (
             speaker_embedding_adapter
             or PyannoteSpeakerEmbeddingAdapter(

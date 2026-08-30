@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import ipaddress
 import os
 from pathlib import Path
 from typing import Literal, Self
+from urllib.parse import urlsplit
 
 from pydantic import AliasChoices, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -259,7 +261,10 @@ class Settings(BaseSettings):
                 ):
                     raise ValueError(f"MODEL_CACHE_ROOT and {name} must not overlap")
 
-        if self.effective_document_mode == "real":
+        uses_real_document_runtime = (
+            self.service_name == "worker" and self.effective_document_mode == "real"
+        )
+        if uses_real_document_runtime:
             required = {
                 "LLM_PROVIDER": self.llm_provider,
                 "LLM_BASE_URL": self.llm_base_url,
@@ -269,6 +274,9 @@ class Settings(BaseSettings):
             missing = [name for name, value in required.items() if not _has_value(value)]
             if missing:
                 raise ValueError("real DOCUMENT_MODE requires: " + ", ".join(missing))
+            if self.llm_provider != "openai_compatible":
+                raise ValueError("LLM_PROVIDER must be openai_compatible")
+            _validate_llm_base_url(str(self.llm_base_url))
         return self
 
     def public_summary(self) -> dict[str, object]:
@@ -291,3 +299,21 @@ def _has_value(value: object) -> bool:
     if isinstance(value, SecretStr):
         return bool(value.get_secret_value())
     return bool(str(value).strip())
+
+
+def _validate_llm_base_url(value: str) -> None:
+    parsed = urlsplit(value)
+    if (
+        not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise ValueError("LLM_BASE_URL must not contain userinfo, query, or fragment")
+    try:
+        loopback = ipaddress.ip_address(parsed.hostname).is_loopback
+    except ValueError:
+        loopback = parsed.hostname == "localhost"
+    if parsed.scheme != "https" and not (parsed.scheme == "http" and loopback):
+        raise ValueError("LLM_BASE_URL requires HTTPS except for loopback addresses")

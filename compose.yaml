@@ -26,7 +26,6 @@ x-backend-environment: &backend-environment
   HF_TOKEN: ${HF_TOKEN:-}
   LLM_PROVIDER: ${LLM_PROVIDER:-}
   LLM_BASE_URL: ${LLM_BASE_URL:-}
-  LLM_API_KEY: ${LLM_API_KEY:-}
   LLM_MODEL: ${LLM_MODEL:-}
   LOG_LEVEL: ${LOG_LEVEL:-INFO}
 
@@ -66,6 +65,7 @@ services:
     environment:
       <<: *backend-environment
       SERVICE_NAME: worker
+      LLM_API_KEY: ${LLM_API_KEY:-}
     user: "${APP_RUN_UID:-1000}:${APP_RUN_GID:-1000}"
     volumes:
       - ${RECORDING_INPUT_HOST_DIR:-${DATA_ROOT:-./runtime}/inbox}:${RECORDING_INPUT_DIR:-/data/inbox}:ro

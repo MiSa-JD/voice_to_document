@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 import logging
 import shutil
+import urllib.request
 from pathlib import Path
 from typing import Any
 
@@ -9,10 +11,79 @@ from app.api import create_app
 from app.config import Settings
 from app.db import connect
 from app.ingest import ingest_file
+from app.openai_classification import OpenAIClassificationAdapter
 from app.pipeline import FakePipelineHandler
 from app.runtime import process_one_job
 from app.state import enqueue_job
 from fastapi.testclient import TestClient
+
+
+def _openai_response() -> bytes:
+    classification = json.dumps(
+        {
+            "schema_version": 1,
+            "category": "회의",
+            "confidence": 0.95,
+            "reason": "안건과 결정이 포함되어 있습니다.",
+        },
+        ensure_ascii=False,
+    )
+    return json.dumps(
+        {
+            "status": "completed",
+            "output": [{"content": [{"type": "output_text", "text": classification}]}],
+        }
+    ).encode()
+
+
+def test_fake_speech_with_openai_document_writes_json_and_markdown(
+    settings_values: dict[str, Any],
+) -> None:
+    settings = Settings(**settings_values)
+    source = settings.recording_input_dir / "complete.m4a"
+    shutil.copyfile(Path(__file__).parents[1] / "fixtures" / "complete.m4a", source)
+    recording_id = ingest_file(settings.database_path, source).recording_id
+    requests: list[urllib.request.Request] = []
+
+    def transport(request: urllib.request.Request, _timeout: float) -> bytes:
+        requests.append(request)
+        return _openai_response()
+
+    handler = FakePipelineHandler(
+        settings,
+        logging.getLogger("test"),
+        classification_adapter=OpenAIClassificationAdapter(
+            base_url="https://api.openai.com/v1",
+            api_key="test-key",
+            model="test-snapshot",
+            transport=transport,
+        ),
+    )
+
+    while process_one_job(settings.database_path, handler, logging.getLogger("test")):
+        pass
+
+    with connect(settings.database_path) as connection:
+        recording = connection.execute(
+            "SELECT status, category FROM recordings WHERE id = ?", (recording_id,)
+        ).fetchone()
+        artifacts = connection.execute(
+            "SELECT kind, relative_path FROM artifacts WHERE recording_id = ?", (recording_id,)
+        ).fetchall()
+    assert dict(recording) == {"status": "COMPLETED", "category": "회의"}
+    assert len(requests) == 1
+    assert {row["kind"] for row in artifacts} == {
+        "recording_audio",
+        "transcript_json",
+        "transcript_markdown",
+    }
+    json_path = next(row["relative_path"] for row in artifacts if row["kind"] == "transcript_json")
+    markdown_path = next(
+        row["relative_path"] for row in artifacts if row["kind"] == "transcript_markdown"
+    )
+    payload = json.loads((settings.transcript_root / json_path).read_text())
+    assert payload["classification_fingerprint"]["provider"] == "openai_compatible"
+    assert "Category: 회의" in (settings.document_root / markdown_path).read_text()
 
 
 def test_complete_fixture_reaches_completed_with_revision_matched_artifacts(

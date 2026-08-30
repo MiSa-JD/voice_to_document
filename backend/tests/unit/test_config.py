@@ -230,7 +230,7 @@ def test_real_speech_requires_writable_model_cache(
 
 
 def test_real_document_requires_llm_variable_names(settings_values: dict[str, Any]) -> None:
-    settings_values["DOCUMENT_MODE"] = "real"
+    settings_values.update({"DOCUMENT_MODE": "real", "SERVICE_NAME": "worker"})
 
     with pytest.raises(ValidationError) as error:
         Settings(**settings_values)
@@ -238,6 +238,62 @@ def test_real_document_requires_llm_variable_names(settings_values: dict[str, An
     message = str(error.value)
     assert "LLM_API_KEY" in message
     assert "LLM_MODEL" in message
+
+
+def test_api_real_document_does_not_receive_worker_secret(
+    settings_values: dict[str, Any],
+) -> None:
+    settings_values.update({"DOCUMENT_MODE": "real", "SERVICE_NAME": "api"})
+
+    settings = Settings(**settings_values)
+
+    assert settings.effective_document_mode == "real"
+    assert settings.llm_api_key is None or not settings.llm_api_key.get_secret_value()
+
+
+@pytest.mark.parametrize(
+    ("name", "value", "message"),
+    [
+        ("LLM_PROVIDER", "other", "openai_compatible"),
+        ("LLM_BASE_URL", "http://example.com/v1", "HTTPS"),
+        ("LLM_BASE_URL", "https://user@example.com/v1", "userinfo"),
+        ("LLM_BASE_URL", "https://example.com/v1?private=1", "query"),
+        ("LLM_BASE_URL", "https://example.com/v1#fragment", "fragment"),
+    ],
+)
+def test_real_document_rejects_unsupported_or_unsafe_provider_settings(
+    settings_values: dict[str, Any], name: str, value: str, message: str
+) -> None:
+    settings_values.update(
+        {
+            "DOCUMENT_MODE": "real",
+            "SERVICE_NAME": "worker",
+            "LLM_PROVIDER": "openai_compatible",
+            "LLM_BASE_URL": "https://api.openai.com/v1",
+            "LLM_API_KEY": "secret",
+            "LLM_MODEL": "snapshot",
+            name: value,
+        }
+    )
+
+    with pytest.raises(ValidationError, match=message):
+        Settings(**settings_values)
+
+
+@pytest.mark.parametrize("url", ["http://localhost:8000/v1", "http://127.0.0.1:8000/v1"])
+def test_real_document_allows_loopback_http(settings_values: dict[str, Any], url: str) -> None:
+    settings_values.update(
+        {
+            "DOCUMENT_MODE": "real",
+            "SERVICE_NAME": "worker",
+            "LLM_PROVIDER": "openai_compatible",
+            "LLM_BASE_URL": url,
+            "LLM_API_KEY": "secret",
+            "LLM_MODEL": "snapshot",
+        }
+    )
+
+    assert Settings(**settings_values).llm_base_url == url
 
 
 def test_legacy_ai_mode_remains_compatible(

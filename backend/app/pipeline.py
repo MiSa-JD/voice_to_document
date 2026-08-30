@@ -15,6 +15,7 @@ from app.classification import (
     ClassificationError,
     ClassificationTimeoutError,
     FakeClassificationAdapter,
+    RetryableClassificationError,
 )
 from app.config import Settings
 from app.db import connect, utc_now
@@ -179,6 +180,11 @@ class FakePipelineHandler:
         except ClassificationTimeoutError as error:
             self._mark_failed(job.recording_id, error.code, "분류 응답 시간이 초과되었습니다.")
             raise RetryableJobError(error.code, "classification timed out") from error
+        except RetryableClassificationError as error:
+            self._mark_failed(
+                job.recording_id, error.code, "분류 공급자에 일시적으로 연결할 수 없습니다."
+            )
+            raise RetryableJobError(error.code, "classification provider unavailable") from error
         except ClassificationError as error:
             self._mark_failed(job.recording_id, error.code, "분류 결과가 유효하지 않습니다.")
             raise PermanentJobError(error.code, "classification result is invalid") from error

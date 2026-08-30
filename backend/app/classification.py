@@ -22,6 +22,14 @@ class ClassificationTimeoutError(ClassificationError):
     code = "CLASSIFICATION_TIMEOUT"
 
 
+class RetryableClassificationError(ClassificationError):
+    code = "CLASSIFICATION_PROVIDER_UNAVAILABLE"
+
+
+class ClassificationProviderError(ClassificationError):
+    code = "CLASSIFICATION_PROVIDER_ERROR"
+
+
 class MalformedClassificationError(ClassificationError):
     code = "MALFORMED_CLASSIFICATION"
 
