@@ -318,6 +318,12 @@ function SpeakerReview({
       <p className="intro">
         {data.recording.original_name}의 음성을 듣고 인물을 연결합니다.
       </p>
+      <aside className="accuracy-warning" role="note">
+        <strong>
+          화자 후보는 유사도 기반 편의 기능이며 신원 인증이 아닙니다.
+        </strong>
+        <p>대표 음성을 직접 듣고 연결할 인물이 맞는지 확인해 주세요.</p>
+      </aside>
       <section className="panel detail-section">
         <h2>원본 오디오</h2>
         {recordingAudio ? (
@@ -380,13 +386,13 @@ function SpeakerReview({
                     {formatDuration(speaker.duration_ms)}
                   </small>
                 </button>
-                <p className="candidate-status">
-                  {speaker.speaker_source === 'auto' && speaker.speaker_name
-                    ? `자동 배정 · 유사도 ${formatScore(speaker.speaker_score)}`
-                    : speaker.speaker_source === 'manual'
-                      ? '수동 배정'
-                      : '자동 후보 없음'}
-                </p>
+                <SpeakerMatchEvidence
+                  speaker={speaker}
+                  busy={savingSpeaker !== null}
+                  onAssign={(personId) =>
+                    void assign(speaker.local_speaker_id, personId)
+                  }
+                />
                 {speaker.representative_clip_artifact_id ? (
                   <audio
                     controls
@@ -666,6 +672,95 @@ function NewPersonForm({
   );
 }
 
+type RecordingSpeaker = RecordingDetailResponse['speakers'][number];
+
+function SpeakerMatchEvidence({
+  speaker,
+  busy,
+  onAssign,
+}: {
+  speaker: RecordingSpeaker;
+  busy: boolean;
+  onAssign: (personId: string) => void;
+}) {
+  const match = speaker.match;
+  const best = match?.candidates[0];
+  const second = match?.candidates[1];
+  return (
+    <section
+      className="match-evidence"
+      aria-label={`${speaker.local_speaker_id} 자동 식별 근거`}
+    >
+      <p
+        className={`assignment-source assignment-source--${speaker.speaker_source}`}
+      >
+        연결 상태: {speakerSourceLabel(speaker.speaker_source)}
+        {speaker.speaker_source === 'auto' &&
+          ` · 유사도 ${formatScore(speaker.speaker_score)}`}
+      </p>
+      {!match ? (
+        <p className="candidate-status" role="status">
+          {speaker.clip_status === 'pending'
+            ? '대표 클립 생성과 후보 계산을 기다리고 있습니다.'
+            : '후보 점수가 아직 없거나 계산 중입니다.'}
+        </p>
+      ) : (
+        <>
+          <p className="match-decision">
+            <strong>판정:</strong> {matchDecisionReason(match.decision)}
+          </p>
+          {best ? (
+            <dl className="match-metrics">
+              <div>
+                <dt>1순위 후보</dt>
+                <dd>
+                  {best.display_name} · 유사도 {formatScore(best.score)}
+                </dd>
+              </div>
+              <div>
+                <dt>2순위 점수</dt>
+                <dd>
+                  {formatScore(match.second_best_score)}
+                  {!second && ' · 후보 없음'}
+                </dd>
+              </div>
+              <div>
+                <dt>1·2위 차이</dt>
+                <dd>{formatScore(match.margin)}</dd>
+              </div>
+            </dl>
+          ) : (
+            <p className="candidate-status">
+              비교할 수 있는 기존 인물 후보가 없습니다.
+            </p>
+          )}
+          {match.candidates.length > 0 && (
+            <ol className="match-candidates" aria-label="유사도 후보 목록">
+              {match.candidates.map((candidate) => (
+                <li key={candidate.person_id}>
+                  <span>
+                    {candidate.rank}위 {candidate.display_name} ·{' '}
+                    {formatScore(candidate.score)}
+                    {candidate.rejected && ' · 과거 자동 연결 거부'}
+                  </span>
+                  <button
+                    className="candidate-action"
+                    type="button"
+                    disabled={busy}
+                    onClick={() => onAssign(candidate.person_id)}
+                  >
+                    {candidate.display_name} 수동 확정
+                  </button>
+                </li>
+              ))}
+            </ol>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
 function formatDuration(milliseconds: number) {
   const seconds = Math.floor(milliseconds / 1000);
   return `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
@@ -673,6 +768,32 @@ function formatDuration(milliseconds: number) {
 
 function formatScore(score: number | null) {
   return score === null ? '정보 없음' : `${Math.round(score * 100)}%`;
+}
+
+function speakerSourceLabel(source: RecordingSpeaker['speaker_source']) {
+  return {
+    auto: '자동 확정',
+    manual: '수동 확정',
+    unresolved: '미확정',
+  }[source];
+}
+
+function matchDecisionReason(
+  decision: NonNullable<RecordingSpeaker['match']>['decision'],
+) {
+  return {
+    insufficient_clips: '대표 클립이 2개보다 적어 비교하지 않았습니다.',
+    no_profiles: '같은 모델로 비교할 수 있는 인물 profile이 없습니다.',
+    insufficient_profiles: '인물 profile의 수동 확인 표본이 부족합니다.',
+    auto_disabled: '후보는 계산했지만 자동 확정 기능이 꺼져 있습니다.',
+    below_threshold: '1순위 후보의 절대 유사도가 자동 확정 기준보다 낮습니다.',
+    insufficient_margin: '1·2위 유사도 차이가 작아 수동 검토가 필요합니다.',
+    duplicate_person:
+      '같은 녹음의 다른 화자와 인물이 중복되어 확정하지 않았습니다.',
+    rejected_candidate:
+      '이 화자와 후보의 과거 자동 연결을 사용자가 거부했습니다.',
+    auto_matched: '절대 유사도와 1·2위 차이 기준을 통과해 자동 확정했습니다.',
+  }[decision];
 }
 
 function clipStatusLabel(

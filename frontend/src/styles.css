@@ -485,6 +485,66 @@ audio {
   margin: 0;
   color: var(--text-muted);
 }
+.accuracy-warning p {
+  margin: 4px 0 0;
+}
+.match-evidence {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--outline-soft);
+  border-radius: var(--radius-md);
+  background: var(--surface-low);
+}
+.assignment-source,
+.match-decision {
+  margin: 0;
+}
+.assignment-source {
+  font-weight: 700;
+}
+.assignment-source--auto {
+  color: var(--success);
+}
+.assignment-source--manual {
+  color: var(--earth);
+}
+.assignment-source--unresolved {
+  color: var(--danger);
+}
+.match-metrics {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+.match-metrics div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+.match-metrics dt {
+  color: var(--text-muted);
+}
+.match-metrics dd {
+  margin: 0;
+  font-weight: 700;
+  text-align: right;
+}
+.match-candidates {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.match-candidates li {
+  display: grid;
+  gap: 6px;
+}
+.candidate-action {
+  min-height: 40px;
+  padding: 8px 12px;
+}
 .speaker-card label {
   display: grid;
   gap: 8px;

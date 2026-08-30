@@ -50,6 +50,16 @@ test('pipeline flow: fixture가 대시보드와 상세 결과에 표시된다', 
   };
   const recordingId = detailBody.items[0]!.id;
   await page.goto(`/recordings/${recordingId}/speakers`);
+  await expect(
+    page.getByText(
+      '화자 후보는 유사도 기반 편의 기능이며 신원 인증이 아닙니다.',
+    ),
+  ).toBeVisible();
+  const evidence = page.getByRole('region', {
+    name: 'SPEAKER_00 자동 식별 근거',
+  });
+  await expect(evidence).toContainText('연결 상태: 미확정');
+  await expect(evidence).toContainText('판정:');
   const clip = page.getByLabel('SPEAKER_00 대표 클립');
   const reviewAudio = (await clip.count())
     ? clip
