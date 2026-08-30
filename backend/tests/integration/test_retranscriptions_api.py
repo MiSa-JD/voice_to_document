@@ -1,0 +1,165 @@
+from __future__ import annotations
+
+import logging
+import shutil
+from pathlib import Path
+from typing import Any
+
+from app.adapters import FakeAdapters
+from app.api import create_app
+from app.config import Settings
+from app.db import connect
+from app.ingest import ingest_file
+from app.pipeline import FakePipelineHandler
+from app.runtime import process_one_job
+from app.schema import Transcript
+from fastapi.testclient import TestClient
+
+
+def _completed(settings: Settings) -> tuple[TestClient, str]:
+    source = settings.recording_input_dir / "complete.m4a"
+    shutil.copyfile(Path(__file__).parents[1] / "fixtures" / "complete.m4a", source)
+    recording_id = ingest_file(settings.database_path, source).recording_id
+    handler = FakePipelineHandler(settings, logging.getLogger("test"))
+    while process_one_job(settings.database_path, handler, logging.getLogger("test")):
+        pass
+    return TestClient(create_app(settings)), recording_id
+
+
+def _request(revision: int = 1) -> dict[str, object]:
+    return {
+        "expected_revision": revision,
+        "language": "en",
+        "content_description": "private description",
+        "terms": ["private-term"],
+        "confirm_impact": True,
+    }
+
+
+def test_retranscription_validates_conflict_duplicate_and_does_not_echo_hints(
+    settings_values: dict[str, Any],
+) -> None:
+    settings = Settings(**settings_values)
+    client, recording_id = _completed(settings)
+
+    invalid_language = client.post(
+        f"/api/recordings/{recording_id}/retranscriptions",
+        json={**_request(), "language": "fr"},
+    )
+    unconfirmed = client.post(
+        f"/api/recordings/{recording_id}/retranscriptions",
+        json={**_request(), "confirm_impact": False},
+    )
+    conflict = client.post(
+        f"/api/recordings/{recording_id}/retranscriptions",
+        json=_request(9),
+    )
+    accepted = client.post(f"/api/recordings/{recording_id}/retranscriptions", json=_request())
+    duplicate = client.post(f"/api/recordings/{recording_id}/retranscriptions", json=_request())
+
+    assert invalid_language.status_code == 422
+    assert unconfirmed.status_code == 422
+    assert conflict.status_code == 409
+    assert accepted.status_code == 202
+    assert accepted.json()["target_revision"] == 2
+    assert accepted.json()["job"]["kind"] == "transcribe"
+    assert "private description" not in accepted.text
+    assert "private-term" not in accepted.text
+    assert duplicate.status_code == 409
+    assert duplicate.json()["error"]["code"] == "RETRANSCRIPTION_IN_PROGRESS"
+
+
+def test_fake_retranscription_swaps_atomically_preserves_history_and_clears_hints(
+    settings_values: dict[str, Any],
+) -> None:
+    settings = Settings(**settings_values)
+    client, recording_id = _completed(settings)
+    accepted = client.post(f"/api/recordings/{recording_id}/retranscriptions", json=_request())
+    handler = FakePipelineHandler(settings, logging.getLogger("test"))
+
+    assert process_one_job(settings.database_path, handler, logging.getLogger("test"))
+
+    latest = client.get(f"/api/recordings/{recording_id}/retranscriptions/latest")
+    assert latest.status_code == 200
+    payload = latest.json()
+    assert payload["status"] == "succeeded"
+    assert payload["previous_language"] == "ko"
+    assert payload["new_language"] == "en"
+    assert payload["new_segment_count"] == 2
+    assert payload["unresolved_speaker_count"] == 2
+    assert payload["history_location"] == "app_data/history"
+    assert "private" not in latest.text
+    assert handler.adapters.last_transcription_options == {
+        "language": "en",
+        "initial_prompt": "private description\n전문용어: private-term",
+    }
+    with connect(settings.database_path) as connection:
+        recording = connection.execute(
+            "SELECT revision, category, needs_speaker_review FROM recordings WHERE id = ?",
+            (recording_id,),
+        ).fetchone()
+        request_row = connection.execute(
+            "SELECT content_hint, terms_json FROM retranscription_requests WHERE id = ?",
+            (accepted.json()["request_id"],),
+        ).fetchone()
+        artifact_revisions = {
+            row["revision"]
+            for row in connection.execute(
+                """
+                SELECT revision FROM artifacts
+                WHERE recording_id = ? AND kind = 'transcript_json'
+                """,
+                (recording_id,),
+            ).fetchall()
+        }
+    assert dict(recording) == {"revision": 2, "category": None, "needs_speaker_review": 1}
+    assert dict(request_row) == {"content_hint": None, "terms_json": None}
+    assert artifact_revisions == {1, 2}
+    history = settings.app_data_dir / "history" / recording_id / "1"
+    assert (history / "transcript_json.json").is_file()
+    assert (history / "transcript_markdown.md").is_file()
+
+
+class FailingAdapters(FakeAdapters):
+    def transcribe(
+        self,
+        recording_id: str,
+        content_sha256: str,
+        revision: int,
+        *,
+        language: str | None = None,
+        initial_prompt: str | None = None,
+    ) -> Transcript:
+        raise ValueError("injected failure")
+
+
+def test_failed_retranscription_keeps_current_result_and_clears_hints(
+    settings_values: dict[str, Any],
+) -> None:
+    settings = Settings(**settings_values)
+    client, recording_id = _completed(settings)
+    with connect(settings.database_path) as connection:
+        before_segments = connection.execute(
+            "SELECT id, text FROM segments WHERE recording_id = ? ORDER BY id",
+            (recording_id,),
+        ).fetchall()
+    accepted = client.post(f"/api/recordings/{recording_id}/retranscriptions", json=_request())
+    handler = FakePipelineHandler(settings, logging.getLogger("test"), adapters=FailingAdapters())
+
+    assert process_one_job(settings.database_path, handler, logging.getLogger("test"))
+
+    with connect(settings.database_path) as connection:
+        recording = connection.execute(
+            "SELECT revision, status FROM recordings WHERE id = ?", (recording_id,)
+        ).fetchone()
+        after_segments = connection.execute(
+            "SELECT id, text FROM segments WHERE recording_id = ? ORDER BY id",
+            (recording_id,),
+        ).fetchall()
+        request_row = connection.execute(
+            "SELECT content_hint, terms_json FROM retranscription_requests WHERE id = ?",
+            (accepted.json()["request_id"],),
+        ).fetchone()
+    assert dict(recording) == {"revision": 1, "status": "COMPLETED"}
+    assert [tuple(row) for row in after_segments] == [tuple(row) for row in before_segments]
+    assert dict(request_row) == {"content_hint": None, "terms_json": None}

@@ -261,7 +261,7 @@ def create_recordings_router(settings: Settings) -> APIRouter:
             segments=[_segment_response(dict(row)) for row in segments],
             artifacts=[ArtifactResponse.model_validate(dict(row)) for row in artifacts],
             jobs=[JobResponse.model_validate(dict(row)) for row in jobs],
-            summary=_load_summary(settings.summary_root, artifacts),
+            summary=_load_summary(settings.summary_root, artifacts, int(recording["revision"])),
         )
 
     return router
@@ -280,8 +280,15 @@ def _segment_response(row: dict[str, Any]) -> SegmentResponse:
         raise ApiProblem(500, "INVALID_SEGMENT", "발화 구간을 읽을 수 없습니다.") from error
 
 
-def _load_summary(root: Path, artifacts: list[Any]) -> MeetingSummary | None:
-    row = next((artifact for artifact in artifacts if artifact["kind"] == "summary_json"), None)
+def _load_summary(root: Path, artifacts: list[Any], current_revision: int) -> MeetingSummary | None:
+    row = next(
+        (
+            artifact
+            for artifact in artifacts
+            if artifact["kind"] == "summary_json" and int(artifact["revision"]) == current_revision
+        ),
+        None,
+    )
     if row is None:
         return None
     root = root.resolve()

@@ -5,11 +5,14 @@ import shutil
 from pathlib import Path
 from typing import Any
 
+from app.api import create_app
 from app.config import Settings
 from app.db import connect
 from app.ingest import ingest_file
 from app.pipeline import FakePipelineHandler
 from app.runtime import process_one_job
+from app.state import enqueue_job
+from fastapi.testclient import TestClient
 
 
 def test_complete_fixture_reaches_completed_with_revision_matched_artifacts(
@@ -179,3 +182,59 @@ def test_unknown_private_hash_uses_local_fallback_without_external_provider(
         "confidence": 0.0,
         "reason": "local deterministic fallback",
     }
+
+
+def test_speaker_edit_rerenders_without_retranscription_and_refreshes_summary(
+    settings_values: dict[str, Any],
+) -> None:
+    settings = Settings(**settings_values)
+    source = settings.recording_input_dir / "complete.m4a"
+    shutil.copyfile(Path(__file__).parents[1] / "fixtures" / "complete.m4a", source)
+    recording_id = ingest_file(settings.database_path, source).recording_id
+    handler = FakePipelineHandler(settings, logging.getLogger("test"))
+    while process_one_job(settings.database_path, handler, logging.getLogger("test")):
+        pass
+    enqueue_job(settings.database_path, recording_id, "summarize", 1, "test-summary")
+    assert process_one_job(settings.database_path, handler, logging.getLogger("test"))
+
+    client = TestClient(create_app(settings))
+    person = client.post("/api/persons", json={"display_name": "검토자"}).json()
+    changed = client.put(
+        f"/api/recordings/{recording_id}/speakers/SPEAKER_00",
+        json={"person_id": person["id"], "expected_revision": 1},
+    )
+    assert changed.status_code == 200
+    assert changed.json()["render_job"]["input_revision"] == 2
+    assert client.get(f"/api/recordings/{recording_id}").json()["summary"] is None
+
+    blocked = client.patch(
+        f"/api/persons/{person['id']}",
+        json={"display_name": "다른 이름", "expected_revision": 1},
+    )
+    assert blocked.status_code == 409
+    assert blocked.json()["error"]["code"] == "RENDER_IN_PROGRESS"
+
+    assert process_one_job(settings.database_path, handler, logging.getLogger("test"))
+    with connect(settings.database_path) as connection:
+        kinds = [
+            row["kind"]
+            for row in connection.execute(
+                "SELECT kind FROM jobs WHERE recording_id = ? ORDER BY created_at, id",
+                (recording_id,),
+            ).fetchall()
+        ]
+        artifacts = connection.execute(
+            "SELECT kind, revision FROM artifacts WHERE recording_id = ?",
+            (recording_id,),
+        ).fetchall()
+    assert kinds.count("transcribe") == 1
+    assert kinds.count("render") == 1
+    assert kinds.count("summarize") == 2
+    assert {row["revision"] for row in artifacts if row["kind"].startswith("transcript_")} == {
+        1,
+        2,
+    }
+    assert "검토자" in next(settings.document_root.glob("*.md")).read_text()
+
+    assert process_one_job(settings.database_path, handler, logging.getLogger("test"))
+    assert client.get(f"/api/recordings/{recording_id}").json()["summary"] is not None

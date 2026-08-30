@@ -90,6 +90,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/recordings/{recording_id}/retranscriptions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create Retranscription */
+        post: operations["create_retranscription_api_recordings__recording_id__retranscriptions_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/recordings/{recording_id}/retranscriptions/latest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Latest Retranscription */
+        get: operations["latest_retranscription_api_recordings__recording_id__retranscriptions_latest_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/recordings/{recording_id}/speakers/{local_speaker_id}": {
         parameters: {
             query?: never;
@@ -187,6 +221,14 @@ export interface components {
             due_date?: string | null;
             /** Task */
             task: string;
+        };
+        /** AffectedRecordingResponse */
+        AffectedRecordingResponse: {
+            /** Recording Id */
+            recording_id: string;
+            /** Recording Revision */
+            recording_revision: number;
+            render_job: components["schemas"]["RenderJobResponse"];
         };
         /** ApiErrorBody */
         ApiErrorBody: {
@@ -302,6 +344,21 @@ export interface components {
             /** Expected Revision */
             expected_revision: number;
         };
+        /** PersonUpdateResponse */
+        PersonUpdateResponse: {
+            /** Affected Recordings */
+            affected_recordings: components["schemas"]["AffectedRecordingResponse"][];
+            /** Created At */
+            created_at: string;
+            /** Display Name */
+            display_name: string;
+            /** Id */
+            id: string;
+            /** Revision */
+            revision: number;
+            /** Updated At */
+            updated_at: string;
+        };
         /** RecordingDetailResponse */
         RecordingDetailResponse: {
             /** Artifacts */
@@ -393,6 +450,112 @@ export interface components {
          * @enum {string}
          */
         RecordingStatus: "DISCOVERED" | "TRANSCRIBING" | "SPEAKER_REVIEW" | "CLASSIFYING" | "READY_FOR_SUMMARY" | "SUMMARIZING" | "COMPLETED" | "FAILED";
+        /** RenderJobResponse */
+        RenderJobResponse: {
+            /** Id */
+            id: string;
+            /** Input Revision */
+            input_revision: number;
+            /**
+             * Kind
+             * @default render
+             */
+            kind: string;
+            /**
+             * Status
+             * @default queued
+             */
+            status: string;
+        };
+        /** RetranscriptionCreateRequest */
+        RetranscriptionCreateRequest: {
+            /**
+             * Confirm Impact
+             * @constant
+             */
+            confirm_impact: true;
+            /** Content Description */
+            content_description?: string | null;
+            /** Expected Revision */
+            expected_revision: number;
+            /**
+             * Language
+             * @default auto
+             * @enum {string}
+             */
+            language: "auto" | "ko" | "en" | "ja";
+            /** Terms */
+            terms?: string[];
+        };
+        /** RetranscriptionCreateResponse */
+        RetranscriptionCreateResponse: {
+            /** Base Revision */
+            base_revision: number;
+            /** Hint Applied */
+            hint_applied: boolean;
+            job: components["schemas"]["RetranscriptionJobResponse"];
+            /** Language */
+            language: string;
+            /** Recording Id */
+            recording_id: string;
+            /** Request Id */
+            request_id: string;
+            /** Target Revision */
+            target_revision: number;
+            /** Warning */
+            warning: string;
+        };
+        /** RetranscriptionJobResponse */
+        RetranscriptionJobResponse: {
+            /** Id */
+            id: string;
+            /** Input Revision */
+            input_revision: number;
+            /**
+             * Kind
+             * @default transcribe
+             */
+            kind: string;
+            /** Status */
+            status: string;
+        };
+        /** RetranscriptionLatestResponse */
+        RetranscriptionLatestResponse: {
+            /** Base Revision */
+            base_revision: number;
+            /** Created At */
+            created_at: string;
+            /** Error Code */
+            error_code: string | null;
+            /** Hint Applied */
+            hint_applied: boolean;
+            /** History Available */
+            history_available: boolean;
+            /** History Location */
+            history_location: string | null;
+            /** New Language */
+            new_language: string | null;
+            /** New Segment Count */
+            new_segment_count: number | null;
+            /** Previous Language */
+            previous_language: string | null;
+            /** Previous Segment Count */
+            previous_segment_count: number;
+            /** Recording Id */
+            recording_id: string;
+            /** Request Id */
+            request_id: string;
+            /** Requested Language */
+            requested_language: string;
+            /** Status */
+            status: string;
+            /** Target Revision */
+            target_revision: number;
+            /** Unresolved Speaker Count */
+            unresolved_speaker_count: number | null;
+            /** Updated At */
+            updated_at: string;
+        };
         /** SegmentResponse */
         SegmentResponse: {
             /**
@@ -441,6 +604,7 @@ export interface components {
             recording_id: string;
             /** Recording Revision */
             recording_revision: number;
+            render_job: components["schemas"]["RenderJobResponse"];
             /** Speaker Name */
             speaker_name: string | null;
             /** Updated Segment Count */
@@ -591,7 +755,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["PersonResponse"];
+                    "application/json": components["schemas"]["PersonUpdateResponse"];
                 };
             };
             /** @description Not Found */
@@ -673,6 +837,99 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RecordingDetailResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_retranscription_api_recordings__recording_id__retranscriptions_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                recording_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RetranscriptionCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RetranscriptionCreateResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    latest_retranscription_api_recordings__recording_id__retranscriptions_latest_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                recording_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RetranscriptionLatestResponse"];
                 };
             };
             /** @description Not Found */

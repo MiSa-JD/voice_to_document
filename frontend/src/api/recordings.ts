@@ -8,6 +8,10 @@ export type RecordingDetailResponse =
   components['schemas']['RecordingDetailResponse'];
 export type Person = components['schemas']['PersonResponse'];
 export type PersonListResponse = components['schemas']['PersonListResponse'];
+export type RetranscriptionLatestResponse =
+  components['schemas']['RetranscriptionLatestResponse'];
+export type RetranscriptionCreateResponse =
+  components['schemas']['RetranscriptionCreateResponse'];
 
 export const ACTIVE_STATUSES = new Set<RecordingStatus>([
   'DISCOVERED',
@@ -101,4 +105,29 @@ export function assignSegmentSpeakers(
 
 export function mediaUrl(artifactId: string) {
   return `/api/media/${encodeURIComponent(artifactId)}`;
+}
+
+export function createRetranscription(
+  recordingId: string,
+  request: components['schemas']['RetranscriptionCreateRequest'],
+) {
+  return requestJson<RetranscriptionCreateResponse>(
+    `/api/recordings/${encodeURIComponent(recordingId)}/retranscriptions`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(request),
+    },
+    [202],
+  );
+}
+
+export function getLatestRetranscription(
+  recordingId: string,
+  signal?: AbortSignal,
+) {
+  return requestJson<RetranscriptionLatestResponse>(
+    `/api/recordings/${encodeURIComponent(recordingId)}/retranscriptions/latest`,
+    { signal },
+  );
 }

@@ -169,9 +169,17 @@ class StubTranscriptionAdapter:
         self.error = error
         self.path: Path | None = None
 
-    def transcribe(self, normalized_wav: Path) -> TranscriptionResult:
+    def transcribe(
+        self,
+        normalized_wav: Path,
+        *,
+        language: str | None = None,
+        initial_prompt: str | None = None,
+    ) -> TranscriptionResult:
         self.path = normalized_wav
         assert normalized_wav.is_file()
+        assert language is None
+        assert initial_prompt is None
         if self.error is not None:
             raise self.error
         return _transcription()

@@ -20,10 +20,10 @@ class FakeModel:
     def __init__(self, result: object, error: Exception | None = None) -> None:
         self.result = result
         self.error = error
-        self.calls: list[tuple[object, int]] = []
+        self.calls: list[tuple[object, int, dict[str, object]]] = []
 
-    def transcribe(self, audio: object, *, batch_size: int) -> object:
-        self.calls.append((audio, batch_size))
+    def transcribe(self, audio: object, *, batch_size: int, **kwargs: object) -> object:
+        self.calls.append((audio, batch_size, kwargs))
         if self.error is not None:
             raise self.error
         return self.result
@@ -50,6 +50,7 @@ class FakeRuntime:
         *,
         compute_type: str,
         language: str | None,
+        asr_options: dict[str, object] | None,
         download_root: str,
         use_auth_token: str | None,
     ) -> WhisperXModel:
@@ -59,6 +60,7 @@ class FakeRuntime:
                 "device": device,
                 "compute_type": compute_type,
                 "language": language,
+                "asr_options": asr_options,
                 "download_root": download_root,
                 "use_auth_token": use_auth_token,
             }
@@ -112,12 +114,13 @@ def test_passes_default_model_settings_and_normalizes_result(tmp_path: Path) -> 
             "device": "cuda",
             "compute_type": "float16",
             "language": None,
+            "asr_options": None,
             "download_root": str(tmp_path),
             "use_auth_token": "hf_private_test_value",
         }
     ]
     assert runtime.load_audio_calls == [str(source)]
-    assert model.calls == [("decoded-audio", 4)]
+    assert model.calls == [("decoded-audio", 4, {})]
     assert result.language == "ko"
     assert [(segment.start, segment.end, segment.text) for segment in result.segments] == [
         (0.0, 1.25, "비밀 전문"),
@@ -133,6 +136,28 @@ def test_fixed_language_is_passed_to_model_and_reported(tmp_path: Path) -> None:
     assert runtime.load_model_calls[0]["language"] == "en"
     assert result.language == "en"
     assert result.model_fingerprint.language == "en"
+
+
+def test_request_language_and_initial_prompt_are_passed_per_call(tmp_path: Path) -> None:
+    model = FakeModel(valid_result())
+    runtime = FakeRuntime(model)
+    adapter = adapter_for(tmp_path, runtime)
+
+    result = adapter.transcribe(
+        tmp_path / "audio.wav", language="ja", initial_prompt="private prompt"
+    )
+
+    assert runtime.load_model_calls[0]["language"] == "ja"
+    assert runtime.load_model_calls[0]["asr_options"] == {"initial_prompt": "private prompt"}
+    assert model.calls == [
+        (
+            "decoded-audio",
+            4,
+            {"language": "ja"},
+        )
+    ]
+    assert result.language == "ja"
+    assert result.model_fingerprint.language == "ja"
 
 
 def test_model_is_lazily_loaded_once_and_reused(tmp_path: Path) -> None:

@@ -152,12 +152,28 @@ def test_recording_speaker_assignment_updates_primary_segments_only(
     )
 
     assert response.status_code == 200
-    assert response.json() == {
+    payload = response.json()
+    assert {
+        key: payload[key]
+        for key in (
+            "recording_id",
+            "recording_revision",
+            "person_id",
+            "speaker_name",
+            "updated_segment_count",
+        )
+    } == {
         "recording_id": recording_id,
         "recording_revision": 2,
         "person_id": person["id"],
         "speaker_name": "홍길동",
         "updated_segment_count": 2,
+    }
+    assert payload["render_job"] == {
+        "id": payload["render_job"]["id"],
+        "kind": "render",
+        "status": "queued",
+        "input_revision": 2,
     }
     with connect(settings.database_path) as connection:
         recording = connection.execute(
@@ -415,11 +431,17 @@ def test_person_rename_is_immediately_visible_and_audit_omits_transcript(
         json={"person_id": person["id"], "expected_revision": 1},
     )
     assert assigned.status_code == 200
+    with connect(settings.database_path) as connection:
+        connection.execute(
+            "UPDATE jobs SET status = 'succeeded' WHERE id = ?",
+            (assigned.json()["render_job"]["id"],),
+        )
     renamed = client.patch(
         f"/api/persons/{person['id']}",
         json={"display_name": "최신 이름", "expected_revision": 1},
     )
     assert renamed.status_code == 200
+    assert renamed.json()["affected_recordings"][0]["recording_revision"] == 3
 
     detail = client.get(f"/api/recordings/{recording_id}")
 

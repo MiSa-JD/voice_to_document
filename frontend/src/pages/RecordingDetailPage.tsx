@@ -4,9 +4,12 @@ import { Link, useParams } from 'react-router-dom';
 import { ApiError } from '../api/client';
 import {
   ACTIVE_STATUSES,
+  createRetranscription,
+  getLatestRetranscription,
   getRecording,
   statusLabel,
   type RecordingDetailResponse,
+  type RetranscriptionLatestResponse,
 } from '../api/recordings';
 
 type ViewState =
@@ -81,12 +84,23 @@ export function RecordingDetailPage() {
         </section>
       )}
 
-      {state.kind === 'success' && <RecordingDetail data={state.data} />}
+      {state.kind === 'success' && (
+        <RecordingDetail
+          data={state.data}
+          onReload={() => setAttempt((value) => value + 1)}
+        />
+      )}
     </main>
   );
 }
 
-function RecordingDetail({ data }: { data: RecordingDetailResponse }) {
+function RecordingDetail({
+  data,
+  onReload,
+}: {
+  data: RecordingDetailResponse;
+  onReload: () => void;
+}) {
   const { recording } = data;
   return (
     <>
@@ -103,6 +117,8 @@ function RecordingDetail({ data }: { data: RecordingDetailResponse }) {
       <Link className="button-link" to={`/recordings/${recording.id}/speakers`}>
         화자 검토
       </Link>
+
+      <RetranscriptionPanel data={data} onReload={onReload} />
 
       <section className="panel detail-section">
         <h2>전체 내용</h2>
@@ -180,6 +196,284 @@ function RecordingDetail({ data }: { data: RecordingDetailResponse }) {
         </ul>
       </section>
     </>
+  );
+}
+
+type RetranscriptionStep = 'closed' | 'edit' | 'confirm';
+
+function RetranscriptionPanel({
+  data,
+  onReload,
+}: {
+  data: RecordingDetailResponse;
+  onReload: () => void;
+}) {
+  const [step, setStep] = useState<RetranscriptionStep>('closed');
+  const [language, setLanguage] = useState<'auto' | 'ko' | 'en' | 'ja'>('auto');
+  const [description, setDescription] = useState('');
+  const [terms, setTerms] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [latest, setLatest] = useState<RetranscriptionLatestResponse | null>(
+    null,
+  );
+  const [error, setError] = useState<string | null>(null);
+  const [pollAttempt, setPollAttempt] = useState(0);
+  const refreshedRequest = useState<string | null>(null);
+  const refreshedRequestId = refreshedRequest[0];
+  const setRefreshedRequestId = refreshedRequest[1];
+
+  useEffect(() => {
+    const controller = new AbortController();
+    let timer: number | undefined;
+    const load = async () => {
+      try {
+        const result = await getLatestRetranscription(
+          data.recording.id,
+          controller.signal,
+        );
+        if (controller.signal.aborted) return;
+        setLatest(result);
+        if (result.status === 'queued' || result.status === 'running') {
+          timer = window.setTimeout(load, 1500);
+        } else if (
+          result.status === 'succeeded' &&
+          refreshedRequestId !== result.request_id
+        ) {
+          setRefreshedRequestId(result.request_id);
+          onReload();
+        }
+      } catch (loadError) {
+        if (
+          !controller.signal.aborted &&
+          !(loadError instanceof ApiError && loadError.status === 404)
+        ) {
+          setError(
+            loadError instanceof ApiError
+              ? loadError.message
+              : '재전사 상태를 불러오지 못했습니다.',
+          );
+        }
+      }
+    };
+    void load();
+    return () => {
+      controller.abort();
+      window.clearTimeout(timer);
+    };
+  }, [
+    data.recording.id,
+    onReload,
+    pollAttempt,
+    refreshedRequestId,
+    setRefreshedRequestId,
+  ]);
+
+  const submit = async () => {
+    setSubmitting(true);
+    setError(null);
+    try {
+      await createRetranscription(data.recording.id, {
+        expected_revision: data.recording.revision,
+        language,
+        content_description: description.trim() || null,
+        terms: terms
+          .split(/[\n,]/)
+          .map((value) => value.trim())
+          .filter(Boolean),
+        confirm_impact: true,
+      });
+      setStep('closed');
+      const result = await getLatestRetranscription(data.recording.id);
+      setLatest(result);
+      setPollAttempt((value) => value + 1);
+    } catch (submitError) {
+      setError(
+        submitError instanceof ApiError
+          ? submitError.message
+          : 'STT 재수행을 요청하지 못했습니다.',
+      );
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const active = latest?.status === 'queued' || latest?.status === 'running';
+  return (
+    <section className="panel detail-section retranscription-panel">
+      <div className="section-heading">
+        <div>
+          <h2>STT 다시 수행</h2>
+          <p className="muted">
+            언어와 선택 힌트를 사용해 음성 인식부터 다시 처리합니다.
+          </p>
+        </div>
+        {step === 'closed' && !active && (
+          <button type="button" onClick={() => setStep('edit')}>
+            재전사 설정 열기
+          </button>
+        )}
+      </div>
+
+      {step === 'edit' && (
+        <form
+          className="retranscription-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            setStep('confirm');
+          }}
+        >
+          <label>
+            녹음 언어
+            <select
+              value={language}
+              onChange={(event) =>
+                setLanguage(event.target.value as typeof language)
+              }
+            >
+              <option value="auto">자동 감지</option>
+              <option value="ko">한국어</option>
+              <option value="en">영어</option>
+              <option value="ja">일본어</option>
+            </select>
+          </label>
+          <label>
+            대략적인 내용 설명 (선택)
+            <textarea
+              value={description}
+              maxLength={1000}
+              onChange={(event) => setDescription(event.target.value)}
+            />
+          </label>
+          <label>
+            고유명사·전문용어 (선택)
+            <textarea
+              value={terms}
+              aria-describedby="terms-help"
+              onChange={(event) => setTerms(event.target.value)}
+            />
+          </label>
+          <p id="terms-help" className="muted">
+            쉼표 또는 줄바꿈으로 구분하고 최대 50개까지 입력하세요.
+          </p>
+          <p className="accuracy-warning">
+            힌트는 정확도 향상을 보장하지 않습니다. 잘못된 언어 고정이나
+            부정확한 힌트는 결과를 악화시킬 수 있습니다.
+          </p>
+          <button type="submit">영향 확인</button>
+          <button
+            className="button-secondary"
+            type="button"
+            onClick={() => setStep('closed')}
+          >
+            취소
+          </button>
+        </form>
+      )}
+
+      {step === 'confirm' && (
+        <section
+          className="retranscription-confirm"
+          aria-label="재전사 영향 확인"
+        >
+          <h3>기존 결과 교체 영향</h3>
+          <ul>
+            <li>새 결과가 모두 성공한 뒤 현재 transcript가 교체됩니다.</li>
+            <li>화자 연결과 대표 클립은 다시 검토해야 합니다.</li>
+            <li>기존 분류와 요약은 stale 처리되어 다시 생성됩니다.</li>
+            <li>실패하면 현재 성공 결과는 그대로 유지됩니다.</li>
+          </ul>
+          <button
+            type="button"
+            disabled={submitting}
+            onClick={() => void submit()}
+          >
+            {submitting ? '요청 중…' : '영향을 확인했고 STT 다시 수행'}
+          </button>
+          <button
+            className="button-secondary"
+            type="button"
+            disabled={submitting}
+            onClick={() => setStep('edit')}
+          >
+            설정으로 돌아가기
+          </button>
+        </section>
+      )}
+
+      {latest && (
+        <RetranscriptionStatus
+          latest={latest}
+          recordingId={data.recording.id}
+        />
+      )}
+      {error && (
+        <p className="inline-error" role="alert">
+          {error}
+        </p>
+      )}
+      {latest?.status === 'failed' && step === 'closed' && (
+        <button type="button" onClick={() => setStep('edit')}>
+          설정을 확인하고 다시 시도
+        </button>
+      )}
+    </section>
+  );
+}
+
+function RetranscriptionStatus({
+  latest,
+  recordingId,
+}: {
+  latest: RetranscriptionLatestResponse;
+  recordingId: string;
+}) {
+  const label =
+    {
+      queued: latest.error_code ? '자동 재시도 대기' : '처리 대기',
+      running: '음성 처리 진행 중',
+      failed: '재전사 실패',
+      succeeded: '재전사 완료',
+    }[latest.status] ?? latest.status;
+  return (
+    <div
+      className={`retranscription-status retranscription-status--${latest.status}`}
+      role="status"
+    >
+      <strong>{label}</strong>
+      {latest.status === 'failed' && (
+        <p>기존 성공 transcript는 계속 표시됩니다.</p>
+      )}
+      {latest.status === 'succeeded' && (
+        <>
+          <dl className="comparison-grid">
+            <div>
+              <dt>언어</dt>
+              <dd>
+                {latest.previous_language ?? '알 수 없음'} →{' '}
+                {latest.new_language ?? latest.requested_language}
+              </dd>
+            </div>
+            <div>
+              <dt>발화 수</dt>
+              <dd>
+                {latest.previous_segment_count} →{' '}
+                {latest.new_segment_count ?? 0}
+              </dd>
+            </div>
+            <div>
+              <dt>미확정 화자</dt>
+              <dd>{latest.unresolved_speaker_count ?? 0}명</dd>
+            </div>
+          </dl>
+          <Link
+            className="button-link"
+            to={`/recordings/${recordingId}/speakers`}
+          >
+            화자 다시 검토
+          </Link>
+        </>
+      )}
+    </div>
   );
 }
 

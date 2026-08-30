@@ -5,7 +5,7 @@ import time
 from datetime import UTC, datetime
 from pathlib import Path
 
-CURRENT_SCHEMA_VERSION = 6
+CURRENT_SCHEMA_VERSION = 7
 
 
 class FutureSchemaError(RuntimeError):
@@ -364,6 +364,43 @@ MIGRATIONS: dict[int, tuple[str, ...]] = {
         """
         CREATE INDEX speaker_clips_speaker_revision
         ON speaker_clips(recording_id, local_speaker_id, revision, clip_index)
+        """,
+    ),
+    7: (
+        """
+        CREATE TABLE retranscription_requests (
+            id TEXT PRIMARY KEY,
+            recording_id TEXT NOT NULL REFERENCES recordings(id) ON DELETE CASCADE,
+            job_id TEXT NOT NULL UNIQUE REFERENCES jobs(id) ON DELETE CASCADE,
+            base_revision INTEGER NOT NULL CHECK (base_revision > 0),
+            target_revision INTEGER NOT NULL CHECK (target_revision = base_revision + 1),
+            requested_language TEXT NOT NULL CHECK (
+                requested_language IN ('auto', 'ko', 'en', 'ja')
+            ),
+            previous_language TEXT,
+            content_hint TEXT,
+            terms_json TEXT,
+            hint_hash TEXT NOT NULL,
+            hint_applied INTEGER NOT NULL CHECK (hint_applied IN (0, 1)),
+            model_fingerprint TEXT NOT NULL,
+            config_fingerprint TEXT NOT NULL,
+            previous_segment_count INTEGER NOT NULL CHECK (previous_segment_count >= 0),
+            new_segment_count INTEGER,
+            unresolved_speaker_count INTEGER,
+            history_relative_dir TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            completed_at TEXT
+        )
+        """,
+        """
+        CREATE UNIQUE INDEX retranscriptions_one_active
+        ON retranscription_requests(recording_id)
+        WHERE completed_at IS NULL
+        """,
+        """
+        CREATE INDEX retranscriptions_recording_created
+        ON retranscription_requests(recording_id, created_at DESC)
         """,
     ),
 }

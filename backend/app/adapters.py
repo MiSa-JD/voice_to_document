@@ -19,13 +19,21 @@ class FakeAdapters:
         if manifest.get("schema_version") != 1 or not isinstance(manifest.get("fixtures"), dict):
             raise ValueError("unsupported fake fixture manifest")
         self.fixtures: dict[str, Any] = manifest["fixtures"]
+        self.last_transcription_options: dict[str, str | None] = {}
 
     def transcribe(
         self,
         recording_id: str,
         content_sha256: str,
         revision: int,
+        *,
+        language: str | None = None,
+        initial_prompt: str | None = None,
     ) -> Transcript:
+        self.last_transcription_options = {
+            "language": language,
+            "initial_prompt": initial_prompt,
+        }
         expected = self._expected(content_sha256)
         raw_segments = expected.get("segments")
         if not isinstance(raw_segments, list):
@@ -44,7 +52,7 @@ class FakeAdapters:
             recording_id=namespace,
             content_sha256=content_sha256,
             revision=revision,
-            language=str(expected["language"]),
+            language=language or str(expected["language"]),
             needs_speaker_review=bool(expected["needs_speaker_review"]),
             segments=segments,
         )

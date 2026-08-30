@@ -141,7 +141,7 @@ test('화자 카드, 클립 상태, 선택 발화와 timestamp seek를 표시한
     screen.getByText('대표 클립으로 적합한 발화가 부족합니다.'),
   ).toBeInTheDocument();
   await userEvent.click(
-    screen.getByRole('button', { name: /SPEAKER_01 1개 발화/ }),
+    screen.getByRole('button', { name: /SPEAKER_01, 1개 발화/ }),
   );
   expect(screen.getByText('둘째 발화').closest('li')).toHaveClass(
     'transcript__row--selected',
@@ -150,7 +150,9 @@ test('화자 카드, 클립 상태, 선택 발화와 timestamp seek를 표시한
   const original = document.querySelector(
     'audio[src="/api/media/audio-id"]',
   ) as HTMLAudioElement;
-  await userEvent.click(screen.getByRole('button', { name: '00:04' }));
+  await userEvent.click(
+    screen.getByRole('button', { name: '00:04부터 오디오 재생' }),
+  );
   expect(original.currentTime).toBe(4);
   expect(play).toHaveBeenCalled();
 });
@@ -209,6 +211,39 @@ test('기존 인물 연결을 revision과 함께 즉시 저장하고 다시 읽�
       ),
     ).toHaveLength(2),
   );
+});
+
+test('새 인물 인라인 폼은 오류를 설명하고 취소 시 선택으로 초점을 돌린다', async () => {
+  vi.stubGlobal(
+    'fetch',
+    vi
+      .fn()
+      .mockImplementation((path: string) =>
+        Promise.resolve(
+          path === '/api/persons'
+            ? response(200, { items: [], total: 0 })
+            : response(200, detail),
+        ),
+      ),
+  );
+  renderPage();
+
+  const select = await screen.findByRole('combobox', {
+    name: 'SPEAKER_00 인물 연결',
+  });
+  await userEvent.selectOptions(select, '__new__');
+  const input = screen.getByRole('textbox', { name: '새 인물 이름' });
+  expect(input).toHaveFocus();
+  expect(input).toHaveAccessibleDescription(
+    'transcript에 표시할 이름을 입력하세요.',
+  );
+  await userEvent.click(screen.getByRole('button', { name: '인물 만들기' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent(
+    '인물 이름을 입력하세요.',
+  );
+  expect(input).toHaveAttribute('aria-invalid', 'true');
+  await userEvent.click(screen.getByRole('button', { name: '취소' }));
+  await waitFor(() => expect(select).toHaveFocus());
 });
 
 test('로딩 실패와 빈 화자 상태를 구분한다', async () => {

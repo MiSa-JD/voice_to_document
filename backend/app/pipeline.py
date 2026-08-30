@@ -33,10 +33,11 @@ from app.renderer import (
     transcript_artifact_paths,
     with_classification,
 )
+from app.retranscriptions import commit_retranscription, request_for_job
 from app.runtime import PermanentJobError, RetryableJobError
 from app.schema import Classification, MeetingSummary, RecordingStatus, Segment, Transcript
 from app.speaker_clips import generate_speaker_clips
-from app.state import transition_and_enqueue, transition_recording
+from app.state import enqueue_job, transition_and_enqueue, transition_recording
 
 
 class TranscriptRendererError(RuntimeError):
@@ -108,6 +109,35 @@ class FakePipelineHandler:
             }
 
     def __call__(self, job: Job) -> None:
+        if job.kind == "render":
+            try:
+                self._render(job)
+            except TranscriptRendererError as error:
+                raise PermanentJobError(
+                    "TRANSCRIPT_RENDER_ERROR", "transcript rerender failed"
+                ) from error
+            except OSError as error:
+                raise RetryableJobError(
+                    "ARTIFACT_IO_ERROR", "rerender artifact write failed"
+                ) from error
+            except ValueError as error:
+                raise PermanentJobError("INVALID_RENDER_SOURCE", str(error)) from error
+            return
+        if (
+            job.kind == "transcribe"
+            and request_for_job(self.settings.database_path, job.id) is not None
+        ):
+            try:
+                self._transcribe(job)
+            except OSError as error:
+                raise RetryableJobError(
+                    "ARTIFACT_IO_ERROR", "retranscription staging failed"
+                ) from error
+            except (FakeFixtureNotFoundError, ValueError) as error:
+                raise PermanentJobError(
+                    "INVALID_RETRANSCRIPTION_RESULT", "retranscription result is invalid"
+                ) from error
+            return
         try:
             if job.kind == "transcribe":
                 self._transcribe(job)
@@ -148,6 +178,17 @@ class FakePipelineHandler:
 
     def _transcribe(self, job: Job) -> None:
         recording = self._recording(job.recording_id)
+        retranscription = request_for_job(self.settings.database_path, job.id)
+        if retranscription is not None:
+            transcript = self.adapters.transcribe(
+                job.recording_id,
+                str(recording["content_sha256"]),
+                retranscription.target_revision,
+                language=retranscription.language,
+                initial_prompt=retranscription.initial_prompt,
+            )
+            commit_retranscription(self.settings, job.id, transcript)
+            return
         self._enter(job.recording_id, RecordingStatus.TRANSCRIBING)
         transcript = self.adapters.transcribe(
             job.recording_id,
@@ -223,11 +264,85 @@ class FakePipelineHandler:
             _summary_markdown(summary).encode("utf-8"),
             revision,
         )
-        transition_recording(
-            self.settings.database_path,
-            job.recording_id,
-            RecordingStatus.COMPLETED,
+        if RecordingStatus(str(recording["status"])) is not RecordingStatus.COMPLETED:
+            transition_recording(
+                self.settings.database_path,
+                job.recording_id,
+                RecordingStatus.COMPLETED,
+            )
+
+    def _render(self, job: Job) -> None:
+        recording = self._recording(job.recording_id)
+        revision = int(recording["revision"])
+        if revision != job.input_revision:
+            raise ValueError("render job revision is stale")
+        with connect(self.settings.database_path) as connection:
+            previous = connection.execute(
+                """
+                SELECT relative_path FROM artifacts
+                WHERE recording_id = ? AND kind = 'transcript_json' AND revision < ?
+                ORDER BY revision DESC LIMIT 1
+                """,
+                (job.recording_id, revision),
+            ).fetchone()
+            had_summary = (
+                connection.execute(
+                    """
+                    SELECT 1 FROM artifacts
+                    WHERE recording_id = ? AND kind = 'summary_json' AND revision < ?
+                    LIMIT 1
+                    """,
+                    (job.recording_id, revision),
+                ).fetchone()
+                is not None
+            )
+        if previous is None:
+            raise ValueError("previous transcript artifact is missing")
+        root = self.settings.transcript_root.resolve()
+        previous_path = (root / str(previous["relative_path"])).resolve()
+        if not previous_path.is_relative_to(root):
+            raise ValueError("transcript artifact path leaves configured root")
+        stored = Transcript.model_validate_json(previous_path.read_bytes())
+        transcript = stored.model_copy(
+            update={"revision": revision, "segments": self._segments(job.recording_id)},
+            deep=True,
         )
+        try:
+            json_content = render_transcript_json(transcript)
+            markdown_content = self.markdown_renderer(transcript)
+        except Exception as error:
+            raise TranscriptRendererError from error
+
+        json_relative = Path(job.recording_id) / "revisions" / str(revision) / "transcript.json"
+        write_artifact(
+            self.settings.database_path,
+            self.settings.transcript_root,
+            job.recording_id,
+            "transcript_json",
+            json_relative,
+            json_content,
+            revision,
+            schema_version=transcript.schema_version,
+        )
+        identity = ensure_document_identity(self.settings.database_path, job.recording_id)
+        write_artifact(
+            self.settings.database_path,
+            self.settings.document_root,
+            job.recording_id,
+            "transcript_markdown",
+            document_relative_path(identity.sequence, identity.title),
+            markdown_content,
+            revision,
+            schema_version=MARKDOWN_SCHEMA_VERSION,
+        )
+        if had_summary:
+            enqueue_job(
+                self.settings.database_path,
+                job.recording_id,
+                "summarize",
+                revision,
+                "speaker-edit-summary-v1",
+            )
 
     def _recording(self, recording_id: str) -> sqlite3.Row:
         with connect(self.settings.database_path) as connection:
@@ -431,9 +546,15 @@ class FakePipelineHandler:
         with connect(self.settings.database_path) as connection:
             rows = connection.execute(
                 """
-                SELECT id, start_ms, end_ms, local_speaker_id, assignment_status,
-                       overlapping_speaker_ids_json, person_id, speaker_name, text
-                FROM segments WHERE recording_id = ? ORDER BY start_ms, end_ms, id
+                SELECT segments.id, segments.start_ms, segments.end_ms,
+                       segments.local_speaker_id, segments.assignment_status,
+                       segments.overlapping_speaker_ids_json, segments.person_id,
+                       COALESCE(persons.display_name, segments.speaker_name) AS speaker_name,
+                       segments.text
+                FROM segments
+                LEFT JOIN persons ON persons.id = segments.person_id
+                WHERE segments.recording_id = ?
+                ORDER BY segments.start_ms, segments.end_ms, segments.id
                 """,
                 (recording_id,),
             ).fetchall()
