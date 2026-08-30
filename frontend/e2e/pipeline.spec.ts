@@ -82,6 +82,36 @@ test('pipeline flow: fixture가 대시보드와 상세 결과에 표시된다', 
   await expect(
     page.locator('.transcript').getByText('E2E 검토자'),
   ).toBeVisible();
+
+  await page.goto(`/recordings/${recordingId}`);
+  await page.getByRole('button', { name: '재전사 설정 열기' }).click();
+  await page.getByLabel('녹음 언어').selectOption('en');
+  await page.getByLabel('대략적인 내용 설명 (선택)').fill('E2E 내용 설명');
+  await page.getByLabel('고유명사·전문용어 (선택)').fill('E2E-term, WhisperX');
+  await page.getByRole('button', { name: '영향 확인' }).click();
+  const beforeSubmit = await request.get(
+    `/api/recordings/${recordingId}/retranscriptions/latest`,
+  );
+  expect(beforeSubmit.status()).toBe(404);
+  await page
+    .getByRole('button', { name: '영향을 확인했고 STT 다시 수행' })
+    .click();
+
+  await expect
+    .poll(async () => {
+      const result = await request.get(
+        `/api/recordings/${recordingId}/retranscriptions/latest`,
+      );
+      if (!result.ok()) return 'waiting';
+      const payload = (await result.json()) as { status: string };
+      return payload.status;
+    })
+    .toBe('succeeded');
+  await expect(page.getByText('재전사 완료')).toBeVisible();
+  await expect(page.getByText('ko → en')).toBeVisible();
+  await expect(
+    page.getByRole('link', { name: '화자 다시 검토' }),
+  ).toBeVisible();
 });
 
 test('restart preservation: worker 재시작 뒤 결과가 유지된다', async ({
@@ -110,7 +140,7 @@ test('restart preservation: worker 재시작 뒤 결과가 유지된다', async 
   expect(new Set(payload.artifacts.map((artifact) => artifact.kind))).toEqual(
     new Set(['recording_audio', 'transcript_json', 'transcript_markdown']),
   );
-  expect(payload.artifacts).toHaveLength(5);
-  expect(payload.jobs).toHaveLength(3);
+  expect(payload.artifacts).toHaveLength(7);
+  expect(payload.jobs).toHaveLength(5);
   expect(payload.jobs.every((job) => job.status === 'succeeded')).toBe(true);
 });

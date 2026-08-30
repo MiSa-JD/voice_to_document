@@ -689,14 +689,14 @@ Compose를 시작하고 fixture를 입력 폴더에 넣은 뒤 대시보드에�
 
 ### R5 종료 게이트 — M3
 
-- [ ] 사용자가 대표 클립을 듣고 새 인물을 만들 수 있다.
-- [ ] 임시 화자 전체와 개별 발화를 수정할 수 있다.
-- [ ] 일괄 수정과 저장 전 변경 확인이 동작한다.
-- [ ] 409 충돌이 자동 덮어쓰기 없이 처리된다.
-- [ ] 사용자가 언어와 내용 힌트를 제공해 STT를 다시 수행할 수 있다.
-- [ ] 재전사 실패 시 기존 성공 결과가 유지되고, 성공 시 영향받은 후속 결과가 stale/재검토 상태가 된다.
-- [ ] 수정 이후 DB, JSON, Markdown, UI가 일치한다.
-- [ ] 키보드만으로 핵심 검토 흐름을 완료할 수 있다.
+- [x] 사용자가 대표 클립을 듣고 새 인물을 만들 수 있다.
+- [x] 임시 화자 전체와 개별 발화를 수정할 수 있다.
+- [x] 일괄 수정과 저장 전 변경 확인이 동작한다.
+- [x] 409 충돌이 자동 덮어쓰기 없이 처리된다.
+- [x] 사용자가 언어와 내용 힌트를 제공해 STT를 다시 수행할 수 있다.
+- [x] 재전사 실패 시 기존 성공 결과가 유지되고, 성공 시 영향받은 후속 결과가 stale/재검토 상태가 된다.
+- [x] 수정 이후 DB, JSON, Markdown, UI가 일치한다.
+- [x] 키보드만으로 핵심 검토 흐름을 완료할 수 있다.
 
 ### 데모
 
@@ -1270,7 +1270,7 @@ transcript와 화자 재검토 상태로 전환되는 것을 보여준다.
 | R2 | `DONE` | [M0.5 Compose 검증](progress/018_r2_07_compose_completion.md), [재검증](progress/029_roadmap_gate_verification.md) | - |
 | R3 | `DONE` | [M1 구현 검증](progress/028_r3_m1_verification.md), [재검증](progress/029_roadmap_gate_verification.md) | - |
 | R4 | `DONE` | [실제 모델 평가](progress/040_r4_08_fixed_audio_evaluation.md), [M2 검증](progress/041_r4_m2_verification.md) | - |
-| R5 | `IN PROGRESS` | [R5-05 화자 검토 화면](progress/056_r5_05_speaker_review_ui.md) | R5-06~R5-09 |
+| R5 | `DONE` | [R5-11 STT 재수행 UI와 M3 검증](progress/062_r5_11_stt_rerun_ui.md) | - |
 | R6 | `NOT STARTED` | - | 수동 확정 음성 표본, R5 |
 | R7 | `NOT STARTED` | - | R5, LLM 정책 |
 | R8 | `NOT STARTED` | - | R7, LLM 정책 |
