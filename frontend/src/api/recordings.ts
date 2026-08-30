@@ -47,6 +47,24 @@ export function getRecording(id: string, signal?: AbortSignal) {
   );
 }
 
+export function updateRecordingCategory(
+  id: string,
+  category: string,
+  expectedRevision: number,
+) {
+  return requestJson<components['schemas']['CategoryUpdateResponse']>(
+    `/api/recordings/${encodeURIComponent(id)}/category`,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        category,
+        expected_revision: expectedRevision,
+      }),
+    },
+  );
+}
+
 export function getPersons(signal?: AbortSignal) {
   return requestJson<PersonListResponse>('/api/persons', { signal });
 }

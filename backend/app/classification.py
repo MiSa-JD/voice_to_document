@@ -102,6 +102,8 @@ def validate_classification_response(
         result = Classification.model_validate(value)
     except ValidationError as error:
         raise MalformedClassificationError("classification response violates schema") from error
+    if result.confidence is None:
+        raise MalformedClassificationError("classification confidence must be a number")
     if result.category not in allowed_categories:
         raise DisallowedClassificationCategoryError(
             f"classification category is not allowed: {result.category}"

@@ -132,7 +132,12 @@ def commit_retranscription(
             connection.execute(
                 """
                 UPDATE recordings
-                SET revision = ?, status = 'TRANSCRIBING', category = NULL,
+                SET revision = ?, status = 'TRANSCRIBING',
+                    category = CASE WHEN category_source = 'manual' THEN category ELSE NULL END,
+                    automatic_category = NULL,
+                    category_source = CASE
+                        WHEN category_source = 'manual' THEN 'manual' ELSE NULL
+                    END,
                     category_confidence = NULL, category_reason = NULL,
                     needs_speaker_review = 1, last_error_code = NULL,
                     last_error_message = NULL, updated_at = ?

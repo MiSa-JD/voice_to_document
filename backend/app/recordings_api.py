@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import sqlite3
+import uuid
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
@@ -8,7 +10,7 @@ from fastapi import APIRouter, Query
 from pydantic import BaseModel, Field
 
 from app.config import Settings
-from app.db import connect, migrate_database
+from app.db import connect, migrate_database, utc_now
 from app.schema import MeetingSummary, RecordingStatus
 
 PAGE_SIZE = 50
@@ -44,6 +46,8 @@ class RecordingItem(BaseModel):
     duration_ms: int
     status: RecordingStatus
     category: str | None
+    automatic_category: str | None
+    category_source: Literal["auto", "manual"] | None
     category_confidence: float | None
     category_reason: str | None
     needs_speaker_review: bool
@@ -149,6 +153,27 @@ class RecordingDetailResponse(BaseModel):
     artifacts: list[ArtifactResponse]
     jobs: list[JobResponse]
     summary: MeetingSummary | None
+    allowed_categories: list[str]
+
+
+class CategoryUpdateRequest(BaseModel):
+    category: str = Field(min_length=1)
+    expected_revision: int = Field(ge=1)
+
+
+class CategoryRenderJobResponse(BaseModel):
+    id: str
+    kind: Literal["render"] = "render"
+    status: Literal["queued"] = "queued"
+    input_revision: int
+
+
+class CategoryUpdateResponse(BaseModel):
+    recording_id: str
+    category: str
+    category_source: Literal["manual"] = "manual"
+    revision: int
+    render_job: CategoryRenderJobResponse
 
 
 def create_recordings_router(settings: Settings) -> APIRouter:
@@ -180,6 +205,7 @@ def create_recordings_router(settings: Settings) -> APIRouter:
             rows = connection.execute(
                 f"""
                 SELECT id, original_name, duration_ms, status, category,
+                       automatic_category, category_source,
                        category_confidence, category_reason, needs_speaker_review,
                        revision, created_at, updated_at
                 FROM recordings{where}
@@ -215,6 +241,7 @@ def create_recordings_router(settings: Settings) -> APIRouter:
             recording = connection.execute(
                 """
                 SELECT id, original_name, duration_ms, status, category,
+                       automatic_category, category_source,
                        category_confidence, category_reason, needs_speaker_review,
                        revision, created_at, updated_at
                 FROM recordings WHERE id = ?
@@ -338,6 +365,130 @@ def create_recordings_router(settings: Settings) -> APIRouter:
             artifacts=[ArtifactResponse.model_validate(dict(row)) for row in artifacts],
             jobs=[JobResponse.model_validate(dict(row)) for row in jobs],
             summary=_load_summary(settings.summary_root, artifacts, int(recording["revision"])),
+            allowed_categories=list(settings.categories),
+        )
+
+    @router.patch(
+        "/{recording_id}/category",
+        response_model=CategoryUpdateResponse,
+        responses={
+            404: {"model": ApiErrorResponse},
+            409: {"model": ApiErrorResponse},
+            422: {"model": ApiErrorResponse},
+        },
+    )
+    def update_category(
+        recording_id: str, request: CategoryUpdateRequest
+    ) -> CategoryUpdateResponse:
+        if request.category not in settings.categories:
+            raise ApiProblem(
+                422,
+                "INVALID_CATEGORY",
+                "허용되지 않은 범주입니다.",
+                {"allowed": list(settings.categories)},
+            )
+        migrate_database(settings.database_path)
+        with connect(settings.database_path) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                recording = connection.execute(
+                    "SELECT category, category_source, revision FROM recordings WHERE id = ?",
+                    (recording_id,),
+                ).fetchone()
+                if recording is None:
+                    raise ApiProblem(404, "RECORDING_NOT_FOUND", "녹음을 찾을 수 없습니다.")
+                if int(recording["revision"]) != request.expected_revision:
+                    raise ApiProblem(
+                        409,
+                        "REVISION_CONFLICT",
+                        "다른 변경이 먼저 반영되었습니다. 최신 내용을 다시 확인해 주세요.",
+                        {"current_revision": int(recording["revision"])},
+                    )
+                if str(recording["category"]) == request.category:
+                    raise ApiProblem(
+                        422,
+                        "CATEGORY_UNCHANGED",
+                        "현재 적용된 범주와 같습니다.",
+                    )
+                active = connection.execute(
+                    """
+                    SELECT id, kind FROM jobs
+                    WHERE recording_id = ?
+                      AND kind IN ('classify', 'render', 'summarize')
+                      AND status IN ('queued', 'running')
+                    ORDER BY created_at LIMIT 1
+                    """,
+                    (recording_id,),
+                ).fetchone()
+                if active is not None:
+                    code = {
+                        "classify": "CLASSIFICATION_IN_PROGRESS",
+                        "render": "RENDER_IN_PROGRESS",
+                        "summarize": "SUMMARY_IN_PROGRESS",
+                    }[str(active["kind"])]
+                    raise ApiProblem(
+                        409,
+                        code,
+                        "관련 결과를 처리하는 중입니다. 완료 후 다시 시도해 주세요.",
+                        {"job_id": str(active["id"]), "kind": str(active["kind"])},
+                    )
+                if recording["category"] is None:
+                    raise ApiProblem(
+                        422,
+                        "CATEGORY_NOT_CLASSIFIED",
+                        "자동 분류가 완료된 뒤 범주를 수정할 수 있습니다.",
+                    )
+                previous = str(recording["category"])
+                revision = request.expected_revision + 1
+                timestamp = utc_now()
+                connection.execute(
+                    """
+                    UPDATE recordings
+                    SET category = ?, category_source = 'manual', revision = ?, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (request.category, revision, timestamp, recording_id),
+                )
+                job_id = str(uuid.uuid4())
+                connection.execute(
+                    """
+                    INSERT INTO jobs(
+                        id, recording_id, kind, status, attempts, available_at,
+                        created_at, updated_at, input_revision, settings_fingerprint
+                    ) VALUES (?, ?, 'render', 'queued', 0, ?, ?, ?, ?, 'category-edit-v1')
+                    """,
+                    (job_id, recording_id, timestamp, timestamp, timestamp, revision),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO audit_events(
+                        id, recording_id, event_type, details_json, created_at
+                    ) VALUES (?, ?, 'recording_category_updated', ?, ?)
+                    """,
+                    (
+                        str(uuid.uuid4()),
+                        recording_id,
+                        json.dumps(
+                            {
+                                "before": previous,
+                                "after": request.category,
+                                "revision": revision,
+                            },
+                            ensure_ascii=False,
+                            sort_keys=True,
+                        ),
+                        timestamp,
+                    ),
+                )
+                connection.commit()
+            except (ApiProblem, sqlite3.Error):
+                connection.rollback()
+                raise
+        return CategoryUpdateResponse(
+            recording_id=recording_id,
+            category=request.category,
+            revision=revision,
+            render_job=CategoryRenderJobResponse(id=job_id, input_revision=revision),
         )
 
     return router

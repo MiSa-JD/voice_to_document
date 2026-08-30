@@ -6,12 +6,14 @@ import shutil
 from pathlib import Path
 from typing import Any
 
+from app.api import create_app
 from app.config import Settings
 from app.db import connect
 from app.ingest import ingest_file
 from app.pipeline import FakePipelineHandler
 from app.reconciliation import reconcile_markdown_artifacts
 from app.runtime import process_one_job
+from fastapi.testclient import TestClient
 
 
 def _completed_recording(settings: Settings) -> tuple[str, Path]:
@@ -93,6 +95,34 @@ def test_missing_flat_markdown_is_recreated_idempotently(settings_values: dict[s
 
     assert (first.repaired, second.inspected) == (1, 0)
     assert flat_path.read_bytes() == expected
+
+
+def test_manual_category_markdown_is_recreated_with_manual_source(
+    settings_values: dict[str, Any],
+) -> None:
+    settings = Settings(**settings_values)
+    recording_id, flat_path = _completed_recording(settings)
+    client = TestClient(create_app(settings))
+    response = client.patch(
+        f"/api/recordings/{recording_id}/category",
+        json={"category": "강의", "expected_revision": 1},
+    )
+    assert response.status_code == 200
+    handler = FakePipelineHandler(settings, logging.getLogger("test"))
+    assert process_one_job(settings.database_path, handler, logging.getLogger("test"))
+    expected = flat_path.read_bytes()
+    flat_path.unlink()
+
+    result = reconcile_markdown_artifacts(
+        settings.database_path,
+        settings.transcript_root,
+        settings.document_root,
+        logging.getLogger("test"),
+    )
+
+    assert result.repaired == 1
+    assert flat_path.read_bytes() == expected
+    assert b"Category Source: manual" in expected
 
 
 def test_revision_mismatch_keeps_legacy_artifact_and_records_safe_audit(

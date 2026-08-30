@@ -91,6 +91,13 @@ def test_fake_adapter_distinguishes_disallowed_category() -> None:
     assert error.value.code == "DISALLOWED_CLASSIFICATION_CATEGORY"
 
 
+def test_automatic_classification_rejects_null_confidence() -> None:
+    with pytest.raises(MalformedClassificationError):
+        FakeClassificationAdapter(lambda _digest: _valid_response(confidence=None)).classify(
+            _transcript(), ("회의",)
+        )
+
+
 def test_fake_adapter_distinguishes_timeout() -> None:
     def timeout(_digest: str) -> object:
         raise TimeoutError

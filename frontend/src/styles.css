@@ -309,6 +309,38 @@ h3 {
 .detail-section {
   margin-top: 16px;
 }
+
+.category-details {
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+}
+
+.category-details dt {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.category-details dd {
+  margin: 0.25rem 0 0;
+}
+
+.category-form {
+  align-items: end;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-top: 1rem;
+}
+
+.category-form label {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.category-message {
+  margin-bottom: 0;
+}
 audio {
   width: 100%;
 }

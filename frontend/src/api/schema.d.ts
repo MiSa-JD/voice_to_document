@@ -90,6 +90,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/recordings/{recording_id}/category": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Update Category */
+        patch: operations["update_category_api_recordings__recording_id__category_patch"];
+        trace?: never;
+    };
     "/api/recordings/{recording_id}/retranscriptions": {
         parameters: {
             query?: never;
@@ -271,6 +288,48 @@ export interface components {
             /** Segment Ids */
             segment_ids: string[];
         };
+        /** CategoryRenderJobResponse */
+        CategoryRenderJobResponse: {
+            /** Id */
+            id: string;
+            /** Input Revision */
+            input_revision: number;
+            /**
+             * Kind
+             * @default render
+             * @constant
+             */
+            kind: "render";
+            /**
+             * Status
+             * @default queued
+             * @constant
+             */
+            status: "queued";
+        };
+        /** CategoryUpdateRequest */
+        CategoryUpdateRequest: {
+            /** Category */
+            category: string;
+            /** Expected Revision */
+            expected_revision: number;
+        };
+        /** CategoryUpdateResponse */
+        CategoryUpdateResponse: {
+            /** Category */
+            category: string;
+            /**
+             * Category Source
+             * @default manual
+             * @constant
+             */
+            category_source: "manual";
+            /** Recording Id */
+            recording_id: string;
+            render_job: components["schemas"]["CategoryRenderJobResponse"];
+            /** Revision */
+            revision: number;
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -361,6 +420,8 @@ export interface components {
         };
         /** RecordingDetailResponse */
         RecordingDetailResponse: {
+            /** Allowed Categories */
+            allowed_categories: string[];
             /** Artifacts */
             artifacts: components["schemas"]["ArtifactResponse"][];
             /** Jobs */
@@ -374,12 +435,16 @@ export interface components {
         };
         /** RecordingItem */
         RecordingItem: {
+            /** Automatic Category */
+            automatic_category: string | null;
             /** Category */
             category: string | null;
             /** Category Confidence */
             category_confidence: number | null;
             /** Category Reason */
             category_reason: string | null;
+            /** Category Source */
+            category_source: ("auto" | "manual") | null;
             /** Created At */
             created_at: string;
             /** Duration Ms */
@@ -887,6 +952,59 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_category_api_recordings__recording_id__category_patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                recording_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CategoryUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CategoryUpdateResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
                 };
             };
         };

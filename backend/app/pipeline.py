@@ -6,7 +6,7 @@ import logging
 import sqlite3
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 from app.adapters import FakeAdapters, FakeFixtureNotFoundError
 from app.artifacts import safe_category_slug, write_artifact
@@ -245,11 +245,12 @@ class FakePipelineHandler:
         self._enter(job.recording_id, RecordingStatus.CLASSIFYING)
         transcript = self._load_transcript(job.recording_id, int(recording["revision"]))
         classification = self.classification_adapter.classify(transcript, self.settings.categories)
-        self._save_classification(job.recording_id, classification)
+        applied, source = self._save_classification(job.recording_id, classification)
         classified = with_classification(
             transcript,
-            classification,
+            applied,
             self.classification_adapter.fingerprint,
+            source,
         )
         self._write_classified_transcript_artifacts(classified)
         transition_recording(
@@ -340,6 +341,24 @@ class FakePipelineHandler:
         transcript = stored.model_copy(
             update={"revision": revision, "segments": self._segments(job.recording_id)},
             deep=True,
+        )
+        source = cast(Literal["auto", "manual"], str(recording["category_source"]))
+        transcript = with_classification(
+            transcript,
+            Classification(
+                schema_version=1,
+                category=str(recording["category"]),
+                confidence=(
+                    None if source == "manual" else float(recording["category_confidence"])
+                ),
+                reason=(
+                    "사용자가 수동으로 선택한 범주입니다."
+                    if source == "manual"
+                    else str(recording["category_reason"])
+                ),
+            ),
+            stored.classification_fingerprint,
+            source,
         )
         try:
             json_content = render_transcript_json(transcript)
@@ -530,15 +549,23 @@ class FakePipelineHandler:
         if row is not None and str(row["status"]) == RecordingStatus.TRANSCRIBING.value:
             self._enqueue_classification_revision(recording_id, revision)
 
-    def _save_classification(self, recording_id: str, classification: Classification) -> None:
+    def _save_classification(
+        self, recording_id: str, classification: Classification
+    ) -> tuple[Classification, Literal["auto", "manual"]]:
         with connect(self.settings.database_path) as connection:
             connection.execute(
                 """
                 UPDATE recordings
-                SET category = ?, category_confidence = ?, category_reason = ?, updated_at = ?
+                SET automatic_category = ?,
+                    category = CASE WHEN category_source = 'manual' THEN category ELSE ? END,
+                    category_source = CASE
+                        WHEN category_source = 'manual' THEN 'manual' ELSE 'auto'
+                    END,
+                    category_confidence = ?, category_reason = ?, updated_at = ?
                 WHERE id = ?
                 """,
                 (
+                    classification.category,
                     classification.category,
                     classification.confidence,
                     classification.reason,
@@ -546,6 +573,24 @@ class FakePipelineHandler:
                     recording_id,
                 ),
             )
+            row = connection.execute(
+                "SELECT category, category_source FROM recordings WHERE id = ?",
+                (recording_id,),
+            ).fetchone()
+        if row is None:
+            raise ValueError("recording is missing")
+        source = cast(Literal["auto", "manual"], str(row["category_source"]))
+        if source == "manual":
+            return (
+                Classification(
+                    schema_version=1,
+                    category=str(row["category"]),
+                    confidence=None,
+                    reason="사용자가 수동으로 선택한 범주입니다.",
+                ),
+                source,
+            )
+        return classification, source
 
     def _load_transcript(self, recording_id: str, revision: int) -> Transcript:
         with connect(self.settings.database_path) as connection:
