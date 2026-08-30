@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field, field_validator
 from app.config import Settings
 from app.db import connect, migrate_database, utc_now
 from app.recordings_api import ApiErrorResponse, ApiProblem
+from app.speaker_embeddings import invalidate_embeddings
 
 
 class PersonResponse(BaseModel):
@@ -232,6 +233,7 @@ def create_speaker_review_router(settings: Settings) -> APIRouter:
             current_revision = _recording_revision(connection, recording_id)
             _check_revision(current_revision, request.expected_revision)
             _ensure_render_not_active(connection, recording_id)
+            _ensure_finalize_not_running(connection, recording_id)
             speaker = connection.execute(
                 """
                 SELECT 1 FROM recording_speakers
@@ -246,6 +248,14 @@ def create_speaker_review_router(settings: Settings) -> APIRouter:
             speaker_name = _person_name(connection, request.person_id)
             new_revision = current_revision + 1
             timestamp = utc_now()
+            source_segment_ids = [
+                str(row["id"])
+                for row in connection.execute(
+                    "SELECT id FROM segments WHERE recording_id = ? AND local_speaker_id = ?",
+                    (recording_id, local_speaker_id),
+                ).fetchall()
+            ]
+            invalidate_embeddings(connection, recording_id, source_segment_ids)
             connection.execute(
                 """
                 UPDATE recording_speakers
@@ -284,6 +294,7 @@ def create_speaker_review_router(settings: Settings) -> APIRouter:
                 recording_id,
             )
             render_job = _enqueue_render(connection, recording_id, new_revision)
+            _enqueue_finalize_speakers(connection, settings, recording_id, new_revision)
             connection.commit()
         return SpeakerAssignmentResponse(
             recording_id=recording_id,
@@ -318,9 +329,11 @@ def create_speaker_review_router(settings: Settings) -> APIRouter:
             current_revision = _recording_revision(connection, recording_id)
             _check_revision(current_revision, request.expected_revision)
             _ensure_render_not_active(connection, recording_id)
+            _ensure_finalize_not_running(connection, recording_id)
             speaker_name = _person_name(connection, request.person_id)
             new_revision = current_revision + 1
             timestamp = utc_now()
+            invalidate_embeddings(connection, recording_id, [segment_id])
             connection.execute(
                 """
                 UPDATE segments
@@ -343,6 +356,7 @@ def create_speaker_review_router(settings: Settings) -> APIRouter:
                 recording_id,
             )
             render_job = _enqueue_render(connection, recording_id, new_revision)
+            _enqueue_finalize_speakers(connection, settings, recording_id, new_revision)
             connection.commit()
         return SpeakerAssignmentResponse(
             recording_id=recording_id,
@@ -369,6 +383,7 @@ def create_speaker_review_router(settings: Settings) -> APIRouter:
             current_revision = _recording_revision(connection, request.recording_id)
             _check_revision(current_revision, request.expected_revision)
             _ensure_render_not_active(connection, request.recording_id)
+            _ensure_finalize_not_running(connection, request.recording_id)
             placeholders = ",".join("?" for _ in request.segment_ids)
             rows = connection.execute(
                 f"SELECT id, recording_id FROM segments WHERE id IN ({placeholders})",
@@ -386,6 +401,7 @@ def create_speaker_review_router(settings: Settings) -> APIRouter:
             speaker_name = _person_name(connection, request.person_id)
             new_revision = current_revision + 1
             timestamp = utc_now()
+            invalidate_embeddings(connection, request.recording_id, request.segment_ids)
             cursor = connection.execute(
                 f"""
                 UPDATE segments
@@ -408,6 +424,7 @@ def create_speaker_review_router(settings: Settings) -> APIRouter:
                 request.recording_id,
             )
             render_job = _enqueue_render(connection, request.recording_id, new_revision)
+            _enqueue_finalize_speakers(connection, settings, request.recording_id, new_revision)
             connection.commit()
         return SpeakerAssignmentResponse(
             recording_id=request.recording_id,
@@ -475,6 +492,23 @@ def _ensure_render_not_active(connection: sqlite3.Connection, recording_id: str)
         )
 
 
+def _ensure_finalize_not_running(connection: sqlite3.Connection, recording_id: str) -> None:
+    row = connection.execute(
+        """
+        SELECT id FROM jobs
+        WHERE recording_id = ? AND kind = 'finalize_speakers' AND status = 'running'
+        """,
+        (recording_id,),
+    ).fetchone()
+    if row is not None:
+        raise ApiProblem(
+            409,
+            "SPEAKER_FINALIZATION_IN_PROGRESS",
+            "화자 자료를 반영하는 중입니다. 완료 후 다시 시도해 주세요.",
+            {"job_id": str(row["id"])},
+        )
+
+
 def _enqueue_render(
     connection: sqlite3.Connection, recording_id: str, revision: int
 ) -> RenderJobResponse:
@@ -490,6 +524,54 @@ def _enqueue_render(
         (job_id, recording_id, timestamp, timestamp, timestamp, revision),
     )
     return RenderJobResponse(id=job_id, input_revision=revision)
+
+
+def _enqueue_finalize_speakers(
+    connection: sqlite3.Connection,
+    settings: Settings,
+    recording_id: str,
+    revision: int,
+) -> None:
+    timestamp = utc_now()
+    queued = connection.execute(
+        """
+        SELECT id FROM jobs
+        WHERE recording_id = ? AND kind = 'finalize_speakers' AND status = 'queued'
+        """,
+        (recording_id,),
+    ).fetchone()
+    if queued is not None:
+        connection.execute(
+            """
+            UPDATE jobs SET input_revision = ?, settings_fingerprint = ?,
+                available_at = ?, updated_at = ? WHERE id = ?
+            """,
+            (
+                revision,
+                settings.speaker_embedding_settings_fingerprint,
+                timestamp,
+                timestamp,
+                queued["id"],
+            ),
+        )
+        return
+    connection.execute(
+        """
+        INSERT INTO jobs(
+            id, recording_id, kind, status, attempts, available_at,
+            created_at, updated_at, input_revision, settings_fingerprint
+        ) VALUES (?, ?, 'finalize_speakers', 'queued', 0, ?, ?, ?, ?, ?)
+        """,
+        (
+            str(uuid.uuid4()),
+            recording_id,
+            timestamp,
+            timestamp,
+            timestamp,
+            revision,
+            settings.speaker_embedding_settings_fingerprint,
+        ),
+    )
 
 
 def _update_recording_revision(

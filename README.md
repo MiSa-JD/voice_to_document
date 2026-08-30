@@ -120,6 +120,13 @@ RTX 3060 12GB용 보수적 시작값인 `4`입니다. 실제 speech runtime의 `
 디렉터리와 겹치지 않는, 존재하고 쓰기 가능한 절대 경로여야 합니다. 기존 `AI_MODE`는 직접 실행
 호환용으로 읽지만 새 설정에서는 사용하지 않습니다.
 
+수동 확정한 화자의 대표 클립은 `finalize_speakers` 작업에서 `pyannote/embedding`으로 처리합니다.
+모델·revision·device는 `SPEAKER_EMBEDDING_MODEL`, `SPEAKER_EMBEDDING_MODEL_REVISION`,
+`SPEAKER_EMBEDDING_DEVICE`로 설정하며, 실제 weight 해시와 전처리 버전을 embedding metadata에
+함께 저장합니다. 벡터는 `app.db`의 고정된 `sqlite-vec` 저장소에만 보관되고 서로 다른 model
+fingerprint끼리는 비교하지 않습니다. `pyannote/embedding` 모델 사용 조건도 Hugging Face에서
+승인되어 있어야 합니다.
+
 GPU runtime만 검증하려면 NVIDIA driver와 NVIDIA Container Toolkit을 준비한 뒤 실행합니다.
 
 ```sh

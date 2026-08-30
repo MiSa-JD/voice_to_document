@@ -5,7 +5,9 @@ import time
 from datetime import UTC, datetime
 from pathlib import Path
 
-CURRENT_SCHEMA_VERSION = 7
+import sqlite_vec  # type: ignore[import-untyped]
+
+CURRENT_SCHEMA_VERSION = 8
 
 
 class FutureSchemaError(RuntimeError):
@@ -403,6 +405,20 @@ MIGRATIONS: dict[int, tuple[str, ...]] = {
         ON retranscription_requests(recording_id, created_at DESC)
         """,
     ),
+    8: (
+        """
+        CREATE TABLE speaker_vector_keys (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            vector_key TEXT NOT NULL UNIQUE CHECK (length(trim(vector_key)) > 0)
+        )
+        """,
+        """
+        CREATE VIRTUAL TABLE speaker_vectors USING vec0(
+            vector_id INTEGER PRIMARY KEY,
+            embedding FLOAT[512] distance_metric=cosine
+        )
+        """,
+    ),
 }
 
 
@@ -411,6 +427,9 @@ def connect(database_path: Path) -> sqlite3.Connection:
         connection = sqlite3.connect(database_path, timeout=5)
         connection.row_factory = sqlite3.Row
         try:
+            connection.enable_load_extension(True)
+            sqlite_vec.load(connection)
+            connection.enable_load_extension(False)
             connection.execute("PRAGMA foreign_keys = ON")
             connection.execute("PRAGMA busy_timeout = 5000")
             journal_mode = str(connection.execute("PRAGMA journal_mode").fetchone()[0])
