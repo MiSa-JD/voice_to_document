@@ -19,11 +19,22 @@
 
 ## GPU verification
 
-- Do not use a sandboxed `nvidia-smi` result to determine whether NVIDIA GPU access works.
-  The Codex filesystem/process sandbox can deny NVIDIA device access even when the host and Docker
-  GPU runtime are healthy.
-- Run GPU availability checks outside the sandbox with explicit escalation. Verify both the host
-  (`nvidia-smi`) and Docker (`docker run --gpus all ... nvidia-smi`) before reporting a GPU problem.
-- For application-level verification, use `compose.yaml` with `compose.gpu.yaml` and confirm the
-  real worker pipeline. Never report “NVIDIA driver unavailable” solely from a sandbox failure.
+- Perform real NVIDIA/GPU verification only when a change affects GPU behavior, including CUDA or
+  NVIDIA dependencies, GPU container/runtime configuration, GPU device selection, or a worker path
+  that executes on the GPU.
+- For changes unrelated to GPU behavior, explicitly state that real NVIDIA/GPU verification is
+  unnecessary because the changed path neither uses nor affects the GPU runtime. Run only the
+  ordinary checks relevant to the change.
+- When real NVIDIA/GPU verification is required, first plan the minimum checks needed for the
+  affected behavior, then run only those checks. Do not use a sandboxed `nvidia-smi` result to
+  determine whether NVIDIA GPU access works; the Codex filesystem/process sandbox can deny NVIDIA
+  device access even when the host and Docker GPU runtime are healthy.
+- Run required GPU availability checks outside the sandbox with explicit escalation. Check only the
+  layers relevant to the change: use host `nvidia-smi` for host access, Docker
+  (`docker run --gpus all ... nvidia-smi`) for container runtime access, and `compose.yaml` with
+  `compose.gpu.yaml` plus the real worker pipeline for application-level behavior.
+- If the required real NVIDIA/GPU verification cannot be completed in the current development
+  environment, move the development environment to the operations server and repeat the required
+  checks there before reporting the verification result. Never report “NVIDIA driver unavailable”
+  solely from a sandbox failure.
 - Keep private transcript text, private source paths, and credentials out of logs and progress docs.
