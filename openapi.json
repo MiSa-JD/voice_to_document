@@ -173,6 +173,89 @@
         "title": "BatchSpeakerAssignmentRequest",
         "type": "object"
       },
+      "CategoryRenderJobResponse": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "input_revision": {
+            "title": "Input Revision",
+            "type": "integer"
+          },
+          "kind": {
+            "const": "render",
+            "default": "render",
+            "title": "Kind",
+            "type": "string"
+          },
+          "status": {
+            "const": "queued",
+            "default": "queued",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "input_revision"
+        ],
+        "title": "CategoryRenderJobResponse",
+        "type": "object"
+      },
+      "CategoryUpdateRequest": {
+        "properties": {
+          "category": {
+            "minLength": 1,
+            "title": "Category",
+            "type": "string"
+          },
+          "expected_revision": {
+            "minimum": 1.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "category",
+          "expected_revision"
+        ],
+        "title": "CategoryUpdateRequest",
+        "type": "object"
+      },
+      "CategoryUpdateResponse": {
+        "properties": {
+          "category": {
+            "title": "Category",
+            "type": "string"
+          },
+          "category_source": {
+            "const": "manual",
+            "default": "manual",
+            "title": "Category Source",
+            "type": "string"
+          },
+          "recording_id": {
+            "title": "Recording Id",
+            "type": "string"
+          },
+          "render_job": {
+            "$ref": "#/components/schemas/CategoryRenderJobResponse"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "recording_id",
+          "category",
+          "revision",
+          "render_job"
+        ],
+        "title": "CategoryUpdateResponse",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -436,6 +519,13 @@
       },
       "RecordingDetailResponse": {
         "properties": {
+          "allowed_categories": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Allowed Categories",
+            "type": "array"
+          },
           "artifacts": {
             "items": {
               "$ref": "#/components/schemas/ArtifactResponse"
@@ -484,13 +574,25 @@
           "segments",
           "artifacts",
           "jobs",
-          "summary"
+          "summary",
+          "allowed_categories"
         ],
         "title": "RecordingDetailResponse",
         "type": "object"
       },
       "RecordingItem": {
         "properties": {
+          "automatic_category": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Automatic Category"
+          },
           "category": {
             "anyOf": [
               {
@@ -523,6 +625,21 @@
               }
             ],
             "title": "Category Reason"
+          },
+          "category_source": {
+            "anyOf": [
+              {
+                "enum": [
+                  "auto",
+                  "manual"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category Source"
           },
           "created_at": {
             "title": "Created At",
@@ -562,6 +679,8 @@
           "duration_ms",
           "status",
           "category",
+          "automatic_category",
+          "category_source",
           "category_confidence",
           "category_reason",
           "needs_speaker_review",
@@ -1685,6 +1804,78 @@
           }
         },
         "summary": "Recording Detail",
+        "tags": [
+          "recordings"
+        ]
+      }
+    },
+    "/api/recordings/{recording_id}/category": {
+      "patch": {
+        "operationId": "update_category_api_recordings__recording_id__category_patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "recording_id",
+            "required": true,
+            "schema": {
+              "title": "Recording Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CategoryUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CategoryUpdateResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "summary": "Update Category",
         "tags": [
           "recordings"
         ]

@@ -82,6 +82,69 @@ def test_version_nine_data_is_preserved_when_match_tables_are_added(tmp_path: Pa
     assert result_count == 0
 
 
+def test_version_ten_categories_are_migrated_with_source(tmp_path: Path) -> None:
+    database_path = tmp_path / "app.db"
+    with connect(database_path) as connection:
+        connection.execute(
+            "CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)"
+        )
+        for version in range(1, 11):
+            for statement in MIGRATIONS[version]:
+                connection.execute(statement)
+            connection.execute(
+                "INSERT INTO schema_migrations(version, applied_at) VALUES (?, 'now')", (version,)
+            )
+        _insert_recording(connection)
+        connection.execute(
+            """
+            UPDATE recordings SET category = '회의', category_confidence = 0.9
+            WHERE id = 'recording'
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO recordings(
+                id, content_sha256, source_path, original_name, size_bytes, duration_ms,
+                status, created_at, updated_at
+            ) VALUES ('unclassified', ?, '/source-2', 'source-2.m4a', 1, 1000,
+                      'DISCOVERED', 'now', 'now')
+            """,
+            ("b" * 64,),
+        )
+
+    migrate_database(database_path)
+
+    with connect(database_path) as connection:
+        rows = connection.execute(
+            "SELECT id, category, automatic_category, category_source FROM recordings ORDER BY id"
+        ).fetchall()
+    assert [dict(row) for row in rows] == [
+        {
+            "id": "recording",
+            "category": "회의",
+            "automatic_category": "회의",
+            "category_source": "auto",
+        },
+        {
+            "id": "unclassified",
+            "category": None,
+            "automatic_category": None,
+            "category_source": None,
+        },
+    ]
+
+
+def test_category_source_constraint_rejects_unknown_value(tmp_path: Path) -> None:
+    database_path = tmp_path / "app.db"
+    migrate_database(database_path)
+    with connect(database_path) as connection:
+        _insert_recording(connection)
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                "UPDATE recordings SET category_source = 'unknown' WHERE id = 'recording'"
+            )
+
+
 def test_migration_is_safe_to_run_twice(tmp_path: Path) -> None:
     database_path = tmp_path / "app.db"
 

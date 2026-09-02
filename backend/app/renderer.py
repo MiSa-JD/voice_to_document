@@ -4,6 +4,7 @@ import json
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 from app.schema import Classification, Segment, Transcript
 
@@ -28,10 +29,12 @@ def with_classification(
     transcript: Transcript,
     classification: Classification,
     fingerprint: dict[str, object] | None = None,
+    source: Literal["auto", "manual"] = "auto",
 ) -> Transcript:
     return transcript.model_copy(
         update={
             "classification": classification,
+            "classification_source": source,
             "classification_fingerprint": fingerprint,
         },
         deep=True,
@@ -55,7 +58,10 @@ def render_transcript_markdown(transcript: Transcript) -> bytes:
         f"- Recording ID: `{transcript.recording_id}`",
         f"- Revision: {transcript.revision}",
         f"- Category: {classification.category}",
-        f"- Confidence: {classification.confidence:.4f}",
+        f"- Category Source: {transcript.classification_source}",
+        f"- Confidence: {classification.confidence:.4f}"
+        if classification.confidence is not None
+        else "- Confidence: N/A",
         f"- Reason: {classification.reason}",
         "",
         "## Transcript",

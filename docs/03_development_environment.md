@@ -43,7 +43,10 @@
 - 실제 공급자, 모델, base URL, API 키는 R7 진입 전에 확정한다.
 - R1~R3에서는 fake document 어댑터만 사용하며 실제 transcript를 외부로 전송하지 않는다.
 - 외부 전송을 시작하기 전 README와 사용자 화면에 transcript가 외부 서비스로 전송될 수 있음을 표시한다.
-- `LLM_API_KEY`는 `.env` 또는 배포 환경의 프로세스 환경 변수로만 전달하고 로그와 artifact에 기록하지 않는다.
+- `LLM_PROVIDER=openai_compatible`, `LLM_BASE_URL=https://api.openai.com/v1`,
+  `LLM_MODEL=gpt-5.4-nano-2026-03-17`을 실제 분류 기본 계약으로 사용한다.
+- `LLM_API_KEY`는 `.env` 또는 배포 환경의 worker 프로세스 환경 변수로만 전달하고 API 서비스,
+  로그와 artifact에는 전달하거나 기록하지 않는다.
 - 공급자 선택이 늦어지면 R7/R8의 schema, renderer, UI는 fake 어댑터로 계속 개발하되 실제 transcript 전송은 시작하지 않는다.
 
 ## R4 확정 항목

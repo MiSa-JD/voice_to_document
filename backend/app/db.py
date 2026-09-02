@@ -7,7 +7,7 @@ from pathlib import Path
 
 import sqlite_vec  # type: ignore[import-untyped]
 
-CURRENT_SCHEMA_VERSION = 10
+CURRENT_SCHEMA_VERSION = 11
 
 
 class FutureSchemaError(RuntimeError):
@@ -524,6 +524,18 @@ MIGRATIONS: dict[int, tuple[str, ...]] = {
         ON speaker_match_rejections(
             recording_id, local_speaker_id, model_fingerprint, person_id
         )
+        """,
+    ),
+    11: (
+        "ALTER TABLE recordings ADD COLUMN automatic_category TEXT",
+        """
+        ALTER TABLE recordings ADD COLUMN category_source TEXT
+        CHECK (category_source IN ('auto', 'manual'))
+        """,
+        """
+        UPDATE recordings
+        SET automatic_category = category,
+            category_source = CASE WHEN category IS NOT NULL THEN 'auto' END
         """,
     ),
 }

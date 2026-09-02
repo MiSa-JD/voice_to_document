@@ -79,7 +79,7 @@ class SpeechModelFingerprints(BaseModel):
 class Classification(BaseModel):
     schema_version: Literal[1]
     category: NonEmptyText
-    confidence: float = Field(ge=0, le=1)
+    confidence: float | None = Field(ge=0, le=1)
     reason: NonEmptyText
 
     def ensure_allowed(self, categories: tuple[str, ...]) -> Classification:
@@ -98,6 +98,7 @@ class Transcript(BaseModel):
     segments: list[Segment] = Field(min_length=1)
     model_fingerprints: SpeechModelFingerprints | None = None
     classification: Classification | None = None
+    classification_source: Literal["auto", "manual"] | None = None
     classification_fingerprint: dict[str, object] | None = None
 
     @field_validator("content_sha256")

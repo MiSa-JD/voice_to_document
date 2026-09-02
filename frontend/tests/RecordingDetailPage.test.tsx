@@ -330,3 +330,228 @@ test('확인 전에는 변경하지 않고 제출 후 재전사 비교와 재검
     '/recordings/recording-id/speakers',
   );
 });
+
+test('자동 분류 근거를 표시하고 허용 범주를 수동 저장한다', async () => {
+  let revision = 1;
+  const fetchMock = vi
+    .fn()
+    .mockImplementation((path: string, init?: RequestInit) => {
+      if (path.endsWith('/retranscriptions/latest')) {
+        return Promise.resolve(
+          response(404, {
+            error: { code: 'RETRANSCRIPTION_NOT_FOUND', message: '없음' },
+          }),
+        );
+      }
+      if (init?.method === 'PATCH') {
+        revision = 2;
+        return Promise.resolve(
+          response(200, {
+            recording_id: 'recording-id',
+            category: '강의',
+            category_source: 'manual',
+            revision: 2,
+            render_job: {
+              id: 'render-id',
+              kind: 'render',
+              status: 'queued',
+              input_revision: 2,
+            },
+          }),
+        );
+      }
+      return Promise.resolve(
+        response(200, {
+          recording: {
+            id: 'recording-id',
+            original_name: 'complete.m4a',
+            duration_ms: 2000,
+            status: 'COMPLETED',
+            category: revision === 1 ? '회의' : '강의',
+            automatic_category: '회의',
+            category_source: revision === 1 ? 'auto' : 'manual',
+            category_confidence: 0.91,
+            category_reason: '결정과 할 일이 포함된 대화',
+            needs_speaker_review: false,
+            revision,
+            created_at: 'now',
+            updated_at: 'now',
+          },
+          allowed_categories: ['강의', '회의', '기타'],
+          speakers: [],
+          segments: [],
+          artifacts: [],
+          jobs: [],
+          summary: null,
+        }),
+      );
+    });
+  vi.stubGlobal('fetch', fetchMock);
+  renderDetail();
+
+  expect(await screen.findByText('자동 분류 제안')).toBeInTheDocument();
+  expect(screen.getByText('91%')).toBeInTheDocument();
+  expect(screen.getByText('결정과 할 일이 포함된 대화')).toBeInTheDocument();
+  const select = screen.getByRole('combobox', { name: '적용할 범주' });
+  const save = screen.getByRole('button', { name: '범주 저장' });
+  expect(save).toBeDisabled();
+  expect(
+    screen.getAllByRole('option').map((option) => option.textContent),
+  ).toEqual(['강의', '회의', '기타']);
+
+  await userEvent.selectOptions(select, '강의');
+  await userEvent.click(save);
+
+  await waitFor(() =>
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/recordings/recording-id/category',
+      expect.objectContaining({
+        method: 'PATCH',
+        body: JSON.stringify({ category: '강의', expected_revision: 1 }),
+      }),
+    ),
+  );
+  expect(await screen.findByText('강의 · 수동')).toBeInTheDocument();
+});
+
+test('범주 revision 충돌 시 덮어쓰지 않고 최신 내용을 다시 불러온다', async () => {
+  let detailCalls = 0;
+  const fetchMock = vi
+    .fn()
+    .mockImplementation((path: string, init?: RequestInit) => {
+      if (path.endsWith('/retranscriptions/latest')) {
+        return Promise.resolve(
+          response(404, {
+            error: { code: 'RETRANSCRIPTION_NOT_FOUND', message: '없음' },
+          }),
+        );
+      }
+      if (init?.method === 'PATCH') {
+        return Promise.resolve(
+          response(409, {
+            error: {
+              code: 'REVISION_CONFLICT',
+              message: '최신 내용을 확인하세요.',
+              details: { current_revision: 2 },
+            },
+          }),
+        );
+      }
+      detailCalls += 1;
+      return Promise.resolve(
+        response(200, {
+          recording: {
+            id: 'recording-id',
+            original_name: 'complete.m4a',
+            duration_ms: 2000,
+            status: 'COMPLETED',
+            category: detailCalls === 1 ? '회의' : '기타',
+            automatic_category: '회의',
+            category_source: detailCalls === 1 ? 'auto' : 'manual',
+            category_confidence: 0.8,
+            category_reason: '회의 근거',
+            needs_speaker_review: false,
+            revision: detailCalls,
+            created_at: 'now',
+            updated_at: 'now',
+          },
+          allowed_categories: ['강의', '회의', '기타'],
+          speakers: [],
+          segments: [],
+          artifacts: [],
+          jobs: [],
+          summary: null,
+        }),
+      );
+    });
+  vi.stubGlobal('fetch', fetchMock);
+  renderDetail();
+
+  await userEvent.selectOptions(
+    await screen.findByRole('combobox', { name: '적용할 범주' }),
+    '강의',
+  );
+  await userEvent.click(screen.getByRole('button', { name: '범주 저장' }));
+
+  expect(
+    await screen.findByText(
+      '다른 변경이 먼저 반영되어 최신 내용을 다시 불러옵니다.',
+      {
+        exact: false,
+      },
+    ),
+  ).toBeInTheDocument();
+  await waitFor(() => expect(detailCalls).toBe(2));
+  expect(await screen.findByText('기타 · 수동')).toBeInTheDocument();
+});
+
+test.each([
+  {
+    name: '422 응답',
+    patchResult: () =>
+      Promise.resolve(
+        response(422, {
+          error: {
+            code: 'INVALID_CATEGORY',
+            message: '허용되지 않은 범주입니다.',
+            details: {},
+          },
+        }),
+      ),
+    expected: '허용되지 않은 범주입니다. 다른 범주를 선택해 주세요.',
+  },
+  {
+    name: '네트워크 오류',
+    patchResult: () => Promise.reject(new TypeError('offline')),
+    expected: '서버에 연결할 수 없습니다.',
+  },
+])(
+  '범주 저장 $name에 다음 행동을 안내한다',
+  async ({ patchResult, expected }) => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockImplementation((path: string, init?: RequestInit) => {
+        if (path.endsWith('/retranscriptions/latest')) {
+          return Promise.resolve(
+            response(404, {
+              error: { code: 'RETRANSCRIPTION_NOT_FOUND', message: '없음' },
+            }),
+          );
+        }
+        if (init?.method === 'PATCH') return patchResult();
+        return Promise.resolve(
+          response(200, {
+            recording: {
+              id: 'recording-id',
+              original_name: 'complete.m4a',
+              duration_ms: 2000,
+              status: 'COMPLETED',
+              category: '회의',
+              automatic_category: '회의',
+              category_source: 'auto',
+              category_confidence: 0.8,
+              category_reason: '회의 근거',
+              needs_speaker_review: false,
+              revision: 1,
+              created_at: 'now',
+              updated_at: 'now',
+            },
+            allowed_categories: ['강의', '회의'],
+            speakers: [],
+            segments: [],
+            artifacts: [],
+            jobs: [],
+            summary: null,
+          }),
+        );
+      }),
+    );
+    renderDetail();
+    await userEvent.selectOptions(
+      await screen.findByRole('combobox', { name: '적용할 범주' }),
+      '강의',
+    );
+    await userEvent.click(screen.getByRole('button', { name: '범주 저장' }));
+    expect(await screen.findByText(expected)).toBeInTheDocument();
+  },
+);

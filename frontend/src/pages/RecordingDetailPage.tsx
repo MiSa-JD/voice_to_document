@@ -8,6 +8,7 @@ import {
   getLatestRetranscription,
   getRecording,
   statusLabel,
+  updateRecordingCategory,
   type RecordingDetailResponse,
   type RetranscriptionLatestResponse,
 } from '../api/recordings';
@@ -118,6 +119,8 @@ function RecordingDetail({
         화자 검토
       </Link>
 
+      <CategoryPanel data={data} onReload={onReload} />
+
       <RetranscriptionPanel data={data} onReload={onReload} />
 
       <section className="panel detail-section">
@@ -196,6 +199,117 @@ function RecordingDetail({
         </ul>
       </section>
     </>
+  );
+}
+
+function CategoryPanel({
+  data,
+  onReload,
+}: {
+  data: RecordingDetailResponse;
+  onReload: () => void;
+}) {
+  const { recording } = data;
+  const [selected, setSelected] = useState(recording.category ?? '');
+  const [submitting, setSubmitting] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    setSelected(recording.category ?? '');
+  }, [recording.category, recording.revision]);
+
+  const submit = async () => {
+    setSubmitting(true);
+    setMessage(null);
+    try {
+      await updateRecordingCategory(recording.id, selected, recording.revision);
+      setMessage('범주를 저장했습니다. 새 문서를 반영하고 있습니다.');
+      onReload();
+    } catch (error) {
+      if (error instanceof ApiError && error.code === 'REVISION_CONFLICT') {
+        setMessage(
+          '다른 변경이 먼저 반영되어 최신 내용을 다시 불러옵니다. 확인 후 다시 선택해 주세요.',
+        );
+        onReload();
+      } else if (error instanceof ApiError && error.status === 409) {
+        setMessage('관련 결과를 처리 중입니다. 완료된 뒤 다시 저장해 주세요.');
+      } else if (error instanceof ApiError && error.status === 422) {
+        setMessage(`${error.message} 다른 범주를 선택해 주세요.`);
+      } else {
+        setMessage(
+          error instanceof ApiError
+            ? error.message
+            : '범주를 저장하지 못했습니다. 연결을 확인하고 다시 시도해 주세요.',
+        );
+      }
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <section className="panel detail-section category-panel">
+      <h2>범주</h2>
+      <dl className="category-details">
+        <div>
+          <dt>현재 적용</dt>
+          <dd>
+            {recording.category ?? '분류 대기'} ·{' '}
+            {recording.category_source === 'manual'
+              ? '수동'
+              : recording.category_source === 'auto'
+                ? '자동'
+                : '출처 대기'}
+          </dd>
+        </div>
+        <div>
+          <dt>자동 분류 제안</dt>
+          <dd>{recording.automatic_category ?? '아직 없음'}</dd>
+        </div>
+        <div>
+          <dt>자동 신뢰도</dt>
+          <dd>
+            {recording.category_confidence == null
+              ? '아직 없음'
+              : `${Math.round(recording.category_confidence * 100)}%`}
+          </dd>
+        </div>
+        <div>
+          <dt>자동 분류 근거</dt>
+          <dd>{recording.category_reason ?? '아직 없음'}</dd>
+        </div>
+      </dl>
+      {recording.category && (
+        <div className="category-form">
+          <label htmlFor="recording-category">적용할 범주</label>
+          <select
+            id="recording-category"
+            value={selected}
+            disabled={submitting}
+            onChange={(event) => {
+              setSelected(event.target.value);
+              setMessage(null);
+            }}
+          >
+            {(data.allowed_categories ?? []).map((category) => (
+              <option key={category} value={category}>
+                {category}
+              </option>
+            ))}
+          </select>
+          <button
+            type="button"
+            disabled={submitting || selected === recording.category}
+            onClick={() => void submit()}
+          >
+            {submitting ? '저장 중…' : '범주 저장'}
+          </button>
+        </div>
+      )}
+      <p className="category-message" aria-live="polite">
+        {message}
+      </p>
+    </section>
   );
 }
 

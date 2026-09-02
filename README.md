@@ -31,6 +31,8 @@ make test-integration
 make test-e2e
 make test
 make compose-smoke
+make classification-eval
+make classification-e2e
 make model-smoke
 make transcription-smoke
 make alignment-smoke
@@ -47,6 +49,15 @@ worker 경로와 batch size 후보를 평가합니다.
 다운로드 때문에 오래 걸리며 `MODEL_CACHE_ROOT` cache를 이후 실행에서 재사용합니다. 출력 JSON은
 GPU/driver/CUDA, 모델 fingerprint, 감지 언어, segment 수, 처리 시간, cache 사용량과 관찰된 최대
 GPU 메모리만 포함하고 transcript 전문, 원본 경로, `HF_TOKEN`은 포함하지 않습니다.
+
+`make classification-eval`은 Git에 포함된 비민감 한국어 합성 transcript 5종을 고정된
+`gpt-5.4-nano-2026-03-17` snapshot으로 실제 분류합니다. `.env`에 유효한 `LLM_API_KEY`가
+필요하고 OpenAI API 비용과 네트워크 통신이 발생하지만 GPU는 사용하지 않습니다. 출력에는
+case ID, 기대/실제 범주, 성공 여부, model·prompt/schema fingerprint와 합계만 포함하며
+transcript 본문, API key, 공급자 원문 응답은 포함하지 않습니다.
+`make classification-e2e`는 별도의 임시 Compose stack에서 fake speech와 실제 OpenAI document
+분류를 연결하고, 브라우저에서 자동 범주 확인→수동 범주 수정→revision 2 JSON/Markdown/UI 일치를
+검증한 뒤 임시 데이터와 container를 정리합니다.
 
 `make alignment-smoke`는 같은 표준화·실제 전사 흐름 뒤에 감지 언어용 WhisperX alignment
 모델을 로드해 단어 시간을 보정합니다. 출력 JSON에는 전사·정렬 fingerprint, 언어, segment와
@@ -65,7 +76,11 @@ word 개수, 단어 시간이 생성된 segment 수, 처리 시간, cache와 GPU
 
 ## 비밀값과 개인정보
 
-실제 `.env`, Hugging Face 토큰, LLM API 키, 실제 사람의 녹음은 Git에 커밋하지 않습니다. 외부 LLM을 사용하면 transcript가 외부 서비스로 전송될 수 있으며, 공급자와 모델은 R7 전에 확정합니다.
+실제 `.env`, Hugging Face 토큰, LLM API 키, 실제 사람의 녹음은 Git에 커밋하지 않습니다.
+`DOCUMENT_MODE=fake`에서는 transcript가 외부 LLM으로 전송되지 않습니다.
+`DOCUMENT_MODE=real`에서는 분류를 위해 transcript가 설정한 OpenAI Responses API로 전송되며
+네트워크 연결과 API 사용 비용이 발생합니다. 키는 worker에만 전달하고 로그나 artifact에 남기지
+않습니다. 전송할 녹음에 대한 권한과 개인정보 처리 조건을 확인한 뒤 활성화해야 합니다.
 
 자세한 환경 변수와 Compose 실행 방법은 R1 구현과 함께 이 문서에 추가합니다.
 
@@ -115,7 +130,10 @@ HF_TOKEN=your-private-token
 ```
 
 `SPEECH_MODE=real`은 `HF_TOKEN`만 요구합니다. LLM 관련 변수는 `DOCUMENT_MODE=real`에서만
-필수입니다. `WHISPER_LANGUAGE`를 비우면 언어를 자동 감지하며 `WHISPER_BATCH_SIZE` 기본값은
+worker에 필수입니다. 실제 document 분류는 `LLM_PROVIDER=openai_compatible`,
+`LLM_BASE_URL=https://api.openai.com/v1`, `LLM_MODEL=gpt-5.4-nano-2026-03-17`과 유효한
+`LLM_API_KEY`를 사용합니다. API 서비스는 모드 표시만 하므로 키를 전달받지 않습니다.
+`WHISPER_LANGUAGE`를 비우면 언어를 자동 감지하며 `WHISPER_BATCH_SIZE` 기본값은
 RTX 3060 12GB용 보수적 시작값인 `4`입니다. 실제 speech runtime의 `MODEL_CACHE_ROOT`는 결과
 디렉터리와 겹치지 않는, 존재하고 쓰기 가능한 절대 경로여야 합니다. 기존 `AI_MODE`는 직접 실행
 호환용으로 읽지만 새 설정에서는 사용하지 않습니다.

@@ -9,6 +9,8 @@ from app.db import migrate_database
 from app.discovery import StabilityTracker
 from app.jobs import Job
 from app.log import configure_logging
+from app.long_transcript import LongTranscriptClassifier
+from app.openai_classification import OpenAIClassificationAdapter
 from app.pipeline import FakePipelineHandler
 from app.real_pipeline import RealSpeechPipelineHandler
 from app.reconciliation import reconcile_markdown_artifacts
@@ -41,14 +43,7 @@ def run(settings: Settings | None = None, handler: JobHandler | None = None) -> 
         logger,
     )
     tracker = StabilityTracker(config.file_stable_seconds)
-    if handler is not None:
-        job_handler = handler
-    elif config.effective_speech_mode == "fake" and config.effective_document_mode == "fake":
-        job_handler = FakePipelineHandler(config, logger)
-    elif config.effective_speech_mode == "real" and config.effective_document_mode == "fake":
-        job_handler = RealSpeechPipelineHandler(config, logger)
-    else:
-        raise RuntimeError("real document pipeline is not implemented before R7")
+    job_handler = handler or build_handler(config, logger)
     logger.info("worker_started", extra={"stage": "readiness"})
     while not stop.is_set():
         discover_once(config, tracker, logger)
@@ -58,6 +53,29 @@ def run(settings: Settings | None = None, handler: JobHandler | None = None) -> 
         stop.wait(timeout=config.scan_interval_seconds)
     logger.info("worker_stopped", extra={"stage": "shutdown"})
     return 0
+
+
+def build_handler(config: Settings, logger: logging.Logger) -> JobHandler:
+    classification_adapter = None
+    if config.effective_document_mode == "real":
+        if config.llm_api_key is None or config.llm_base_url is None or config.llm_model is None:
+            raise RuntimeError("real document settings were not validated")
+        backend = OpenAIClassificationAdapter(
+            base_url=config.llm_base_url,
+            api_key=config.llm_api_key.get_secret_value(),
+            model=config.llm_model,
+        )
+        classification_adapter = LongTranscriptClassifier(
+            backend,
+            backend,
+            backend,
+            max_context_chars=config.classification_context_max_chars,
+        )
+    if config.effective_speech_mode == "real":
+        return RealSpeechPipelineHandler(
+            config, logger, classification_adapter=classification_adapter
+        )
+    return FakePipelineHandler(config, logger, classification_adapter=classification_adapter)
 
 
 def _r2_handler(logger: logging.Logger) -> JobHandler:

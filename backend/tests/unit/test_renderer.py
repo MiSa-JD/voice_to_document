@@ -93,9 +93,32 @@ def test_markdown_merges_only_adjacent_assigned_same_speaker() -> None:
     assert "Recording ID:" in markdown
     assert "Revision: 7" in markdown
     assert "Category: 회의" in markdown
+    assert "Category Source: auto" in markdown
     assert "Confidence: 0.8750" in markdown
     assert "Reason: 결정" in markdown
     assert "[00:00:00.000–00:00:02.002] SPEAKER_00" in markdown
+
+
+def test_manual_classification_renders_source_without_fake_confidence() -> None:
+    transcript = with_classification(
+        _classified_transcript(),
+        Classification(
+            schema_version=1,
+            category="강의",
+            confidence=None,
+            reason="사용자가 수동으로 선택한 범주입니다.",
+        ),
+        source="manual",
+    )
+
+    value = json.loads(render_transcript_json(transcript))
+    markdown = render_transcript_markdown(transcript).decode()
+
+    assert value["classification_source"] == "manual"
+    assert value["classification"]["category"] == "강의"
+    assert value["classification"]["confidence"] is None
+    assert "Category Source: manual" in markdown
+    assert "Confidence: N/A" in markdown
 
 
 def test_renderer_requires_classification() -> None:

@@ -114,7 +114,8 @@ def _rebuild_transcript(
     with connect(database_path) as connection:
         recording = connection.execute(
             """
-            SELECT content_sha256, category, category_confidence, category_reason
+            SELECT content_sha256, category, category_source,
+                   category_confidence, category_reason
             FROM recordings WHERE id = ? AND revision = ?
             """,
             (recording_id, revision),
@@ -130,10 +131,10 @@ def _rebuild_transcript(
             """
             SELECT id, start_ms, end_ms, text, local_speaker_id, assignment_status,
                    overlapping_speaker_ids_json, person_id, speaker_name
-            FROM segments WHERE recording_id = ? AND revision = ?
+            FROM segments WHERE recording_id = ?
             ORDER BY start_ms, end_ms, id
             """,
-            (recording_id, revision),
+            (recording_id,),
         ).fetchall()
     if recording is None or artifact is None:
         raise ReconciliationError("RECOVERY_SOURCE_MISSING")
@@ -152,19 +153,24 @@ def _rebuild_transcript(
         raise ReconciliationError("TRANSCRIPT_IDENTITY_MISMATCH")
     if not segment_rows:
         raise ReconciliationError("SEGMENTS_MISSING")
-    if (
-        recording["category"] is None
-        or recording["category_confidence"] is None
-        or recording["category_reason"] is None
+    if recording["category"] is None or recording["category_source"] is None:
+        raise ReconciliationError("CLASSIFICATION_MISSING")
+    source = str(recording["category_source"])
+    if source == "auto" and (
+        recording["category_confidence"] is None or recording["category_reason"] is None
     ):
         raise ReconciliationError("CLASSIFICATION_MISSING")
     classification = Classification(
         schema_version=1,
         category=str(recording["category"]),
-        confidence=float(recording["category_confidence"]),
-        reason=str(recording["category_reason"]),
+        confidence=(None if source == "manual" else float(recording["category_confidence"])),
+        reason=(
+            "사용자가 수동으로 선택한 범주입니다."
+            if source == "manual"
+            else str(recording["category_reason"])
+        ),
     )
-    if stored.classification != classification:
+    if stored.classification != classification or stored.classification_source != source:
         raise ReconciliationError("CLASSIFICATION_MISMATCH")
     segments = [
         Segment.model_validate(
@@ -175,7 +181,13 @@ def _rebuild_transcript(
         )
         for row in segment_rows
     ]
-    return stored.model_copy(update={"segments": segments, "classification": classification})
+    return stored.model_copy(
+        update={
+            "segments": segments,
+            "classification": classification,
+            "classification_source": source,
+        }
+    )
 
 
 def _remove_empty_parents(directory: Path, root: Path) -> None:

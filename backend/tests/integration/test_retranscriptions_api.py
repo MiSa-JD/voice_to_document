@@ -136,6 +136,47 @@ def test_fake_retranscription_swaps_atomically_preserves_history_and_clears_hint
     assert (history / "transcript_markdown.md").is_file()
 
 
+def test_manual_category_survives_retranscription_and_automatic_reclassification(
+    settings_values: dict[str, Any],
+) -> None:
+    settings = Settings(**settings_values)
+    client, recording_id = _completed(settings)
+    handler = FakePipelineHandler(settings, logging.getLogger("test"))
+    changed = client.patch(
+        f"/api/recordings/{recording_id}/category",
+        json={"category": "강의", "expected_revision": 1},
+    )
+    assert changed.status_code == 200
+    assert process_one_job(settings.database_path, handler, logging.getLogger("test"))
+
+    accepted = client.post(
+        f"/api/recordings/{recording_id}/retranscriptions",
+        json=_request(2),
+    )
+    assert accepted.status_code == 202
+    while process_one_job(settings.database_path, handler, logging.getLogger("test")):
+        pass
+
+    detail = client.get(f"/api/recordings/{recording_id}").json()
+    assert detail["recording"]["revision"] == 3
+    assert detail["recording"]["category"] == "강의"
+    assert detail["recording"]["automatic_category"] == "회의"
+    assert detail["recording"]["category_source"] == "manual"
+    with connect(settings.database_path) as connection:
+        path = connection.execute(
+            """
+            SELECT relative_path FROM artifacts
+            WHERE recording_id = ? AND kind = 'transcript_json' AND revision = 3
+            """,
+            (recording_id,),
+        ).fetchone()["relative_path"]
+    transcript = Transcript.model_validate_json((settings.transcript_root / path).read_bytes())
+    assert transcript.classification_source == "manual"
+    assert transcript.classification is not None
+    assert transcript.classification.category == "강의"
+    assert transcript.classification.confidence is None
+
+
 class FailingAdapters(FakeAdapters):
     def transcribe(
         self,

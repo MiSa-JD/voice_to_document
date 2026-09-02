@@ -825,11 +825,11 @@ transcript와 화자 재검토 상태로 전환되는 것을 보여준다.
 
 ### R7 종료 게이트 — M5
 
-- [ ] 모든 성공 결과가 허용된 범주 중 하나다.
-- [ ] 전체 내용 또는 긴 문서 축약 결과를 사용해 분류한다.
-- [ ] 사용자가 범주를 수정할 수 있다.
-- [ ] transcript JSON과 Markdown이 같은 revision을 표현한다.
-- [ ] 범주 수정 후 artifact와 UI가 일치한다.
+- [x] 모든 성공 결과가 허용된 범주 중 하나다.
+- [x] 전체 내용 또는 긴 문서 축약 결과를 사용해 분류한다.
+- [x] 사용자가 범주를 수정할 수 있다.
+- [x] transcript JSON과 Markdown이 같은 revision을 표현한다.
+- [x] 범주 수정 후 artifact와 UI가 일치한다.
 
 ### 데모
 
@@ -1271,9 +1271,9 @@ transcript와 화자 재검토 상태로 전환되는 것을 보여준다.
 | R3 | `DONE` | [M1 구현 검증](progress/028_r3_m1_verification.md), [재검증](progress/029_roadmap_gate_verification.md) | - |
 | R4 | `DONE` | [실제 모델 평가](progress/040_r4_08_fixed_audio_evaluation.md), [M2 검증](progress/041_r4_m2_verification.md) | - |
 | R5 | `DONE` | [R5-11 STT 재수행 UI와 M3 검증](progress/062_r5_11_stt_rerun_ui.md) | - |
-| R6 | `NOT STARTED` | - | 수동 확정 음성 표본, R5 |
-| R7 | `NOT STARTED` | - | R5, LLM 정책 |
-| R8 | `NOT STARTED` | - | R7, LLM 정책 |
+| R6 | `BLOCKED` | [R6-01 embedding](progress/063_r6_01_embedding_versioning.md), [R6-02 profile](progress/064_r6_02_person_profiles.md), [R6-03 후보 규칙](progress/065_r6_03_speaker_auto_match.md), [R6-04 UI](progress/066_r6_04_speaker_match_ui.md), [GPU 접근 차단](progress/067_r6_03_gpu_verification.md) | `pyannote/embedding` 접근 승인, 동일·다른·애매한 화자의 비공개 평가 표본 |
+| R7 | `DONE` | [R7-01 범주](progress/042_r7_01_category_config.md), [R7-02 분류](progress/043_r7_02_classification_adapter.md), [R7-03 긴 transcript](progress/044_r7_03_long_transcript.md), [R7-04 renderer](progress/045_r7_04_transcript_renderer.md), [R7-05 범주 수정](progress/068_r7_05_category_edit.md), [OpenAI 실제 분류](progress/069_r7_06_openai_classifier.md), [실제 5개 범주 평가와 M5](progress/070_r7_06_classification_evaluation.md) | - |
+| R8 | `NOT STARTED` | - | - |
 | R9 | `NOT STARTED` | - | R8 |
 | R10 | `NOT STARTED` | - | R9, 운영 장비 |
 
