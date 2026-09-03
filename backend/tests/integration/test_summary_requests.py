@@ -145,3 +145,39 @@ def test_stale_summary_job_finishes_without_overwriting_artifacts(
             ).fetchone()[0]
             == 0
         )
+
+
+def test_detail_derives_summary_policy_status_job_and_requestability(
+    settings_values: dict[str, Any],
+) -> None:
+    settings, client, recording_id = _manual_summary_recording(settings_values)
+
+    initial = client.get(f"/api/recordings/{recording_id}").json()
+    assert (
+        initial["summary_status"],
+        initial["summary_policy"],
+        initial["summary_job"],
+        initial["summary_can_request"],
+    ) == ("not_requested", "manual", None, True)
+
+    client.post(f"/api/recordings/{recording_id}/summary", json={"expected_revision": 1})
+    queued = client.get(f"/api/recordings/{recording_id}").json()
+    assert queued["summary_status"] == "queued"
+    assert queued["summary_job"]["kind"] == "summarize"
+    assert queued["summary_can_request"] is False
+
+    handler = FakePipelineHandler(settings, logging.getLogger("test"))
+    assert process_one_job(settings.database_path, handler, logging.getLogger("test"))
+    succeeded = client.get(f"/api/recordings/{recording_id}").json()
+    assert succeeded["summary_status"] == "succeeded"
+    assert succeeded["summary"]["template"] == "meeting"
+
+    with connect(settings.database_path) as connection:
+        connection.execute(
+            "UPDATE recordings SET revision = 2, status = 'COMPLETED' WHERE id = ?",
+            (recording_id,),
+        )
+    stale = client.get(f"/api/recordings/{recording_id}").json()
+    assert stale["summary_status"] == "stale"
+    assert stale["summary"] is None
+    assert stale["summary_can_request"] is True

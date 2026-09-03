@@ -804,6 +804,40 @@
               }
             ],
             "title": "Summary"
+          },
+          "summary_can_request": {
+            "title": "Summary Can Request",
+            "type": "boolean"
+          },
+          "summary_job": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/JobResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "summary_policy": {
+            "enum": [
+              "automatic",
+              "manual"
+            ],
+            "title": "Summary Policy",
+            "type": "string"
+          },
+          "summary_status": {
+            "enum": [
+              "not_requested",
+              "queued",
+              "running",
+              "succeeded",
+              "stale",
+              "failed"
+            ],
+            "title": "Summary Status",
+            "type": "string"
           }
         },
         "required": [
@@ -813,6 +847,10 @@
           "artifacts",
           "jobs",
           "summary",
+          "summary_status",
+          "summary_policy",
+          "summary_job",
+          "summary_can_request",
           "allowed_categories"
         ],
         "title": "RecordingDetailResponse",

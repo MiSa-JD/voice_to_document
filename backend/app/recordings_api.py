@@ -4,7 +4,7 @@ import json
 import sqlite3
 import uuid
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, cast
 
 from fastapi import APIRouter, Query, Response
 from pydantic import BaseModel, Field, TypeAdapter
@@ -154,6 +154,10 @@ class RecordingDetailResponse(BaseModel):
     artifacts: list[ArtifactResponse]
     jobs: list[JobResponse]
     summary: CategorySummary | None
+    summary_status: Literal["not_requested", "queued", "running", "succeeded", "stale", "failed"]
+    summary_policy: Literal["automatic", "manual"]
+    summary_job: JobResponse | None
+    summary_can_request: bool
     allowed_categories: list[str]
 
 
@@ -371,13 +375,21 @@ def create_recordings_router(settings: Settings) -> APIRouter:
             value = dict(row)
             value["match"] = matches.get(str(row["local_speaker_id"]))
             speaker_responses.append(RecordingSpeakerResponse.model_validate(value))
+        summary = _load_summary(settings.summary_root, artifacts, int(recording["revision"]))
+        summary_status, summary_policy, summary_job, summary_can_request = _summary_state(
+            settings, recording, jobs, artifacts, summary
+        )
         return RecordingDetailResponse(
             recording=_recording_item(dict(recording)),
             speakers=speaker_responses,
             segments=[_segment_response(dict(row)) for row in segments],
             artifacts=[ArtifactResponse.model_validate(dict(row)) for row in artifacts],
             jobs=[JobResponse.model_validate(dict(row)) for row in jobs],
-            summary=_load_summary(settings.summary_root, artifacts, int(recording["revision"])),
+            summary=summary,
+            summary_status=summary_status,
+            summary_policy=summary_policy,
+            summary_job=summary_job,
+            summary_can_request=summary_can_request,
             allowed_categories=list(settings.categories),
         )
 
@@ -682,15 +694,14 @@ def _segment_response(row: dict[str, Any]) -> SegmentResponse:
 def _load_summary(
     root: Path, artifacts: list[Any], current_revision: int
 ) -> CategorySummary | None:
-    row = next(
-        (
-            artifact
-            for artifact in artifacts
-            if artifact["kind"] == "summary_json" and int(artifact["revision"]) == current_revision
-        ),
-        None,
-    )
-    if row is None:
+    current = {
+        str(artifact["kind"]): artifact
+        for artifact in artifacts
+        if int(artifact["revision"]) == current_revision
+        and artifact["kind"] in {"summary_json", "summary_markdown"}
+    }
+    row = current.get("summary_json")
+    if row is None or "summary_markdown" not in current:
         return None
     root = root.resolve()
     path = (root / str(row["relative_path"])).resolve()
@@ -701,3 +712,62 @@ def _load_summary(
         return TypeAdapter(CategorySummary).validate_python(value)
     except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
         raise ApiProblem(500, "INVALID_ARTIFACT", "요약 결과를 읽을 수 없습니다.") from error
+
+
+def _summary_state(
+    settings: Settings,
+    recording: Any,
+    jobs: list[Any],
+    artifacts: list[Any],
+    summary: CategorySummary | None,
+) -> tuple[
+    Literal["not_requested", "queued", "running", "succeeded", "stale", "failed"],
+    Literal["automatic", "manual"],
+    JobResponse | None,
+    bool,
+]:
+    revision = int(recording["revision"])
+    category = None if recording["category"] is None else str(recording["category"])
+    policy: Literal["automatic", "manual"] = (
+        "automatic" if category in settings.auto_summary_categories else "manual"
+    )
+    current_row = next(
+        (
+            row
+            for row in jobs
+            if row["kind"] == "summarize" and int(row["input_revision"]) == revision
+        ),
+        None,
+    )
+    current_job = JobResponse.model_validate(dict(current_row)) if current_row is not None else None
+    status: Literal["not_requested", "queued", "running", "succeeded", "stale", "failed"]
+    if summary is not None:
+        status = "succeeded"
+    elif current_job is not None and current_job.status in {"queued", "running", "failed"}:
+        status = cast(Literal["queued", "running", "failed"], current_job.status)
+    elif any(
+        artifact["kind"] == "summary_json" and int(artifact["revision"]) < revision
+        for artifact in artifacts
+    ):
+        status = "stale"
+    elif current_job is not None and current_job.status == "succeeded":
+        status = "failed"
+    else:
+        status = "not_requested"
+    active_input = any(
+        row["kind"] in {"classify", "render"} and row["status"] in {"queued", "running"}
+        for row in jobs
+    )
+    requestable_recording = RecordingStatus(str(recording["status"])) in {
+        RecordingStatus.READY_FOR_SUMMARY,
+        RecordingStatus.COMPLETED,
+        RecordingStatus.FAILED,
+    }
+    can_request = (
+        category is not None
+        and requestable_recording
+        and not active_input
+        and status not in {"queued", "running", "succeeded"}
+        and not (policy == "automatic" and status == "not_requested")
+    )
+    return status, policy, current_job, can_request

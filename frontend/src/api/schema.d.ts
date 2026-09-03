@@ -527,6 +527,19 @@ export interface components {
             speakers: components["schemas"]["RecordingSpeakerResponse"][];
             /** Summary */
             summary: (components["schemas"]["LectureSummary"] | components["schemas"]["MeetingSummary"] | components["schemas"]["DailyConversationSummary"] | components["schemas"]["GameListSummary"] | components["schemas"]["OtherSummary"]) | null;
+            /** Summary Can Request */
+            summary_can_request: boolean;
+            summary_job: components["schemas"]["JobResponse"] | null;
+            /**
+             * Summary Policy
+             * @enum {string}
+             */
+            summary_policy: "automatic" | "manual";
+            /**
+             * Summary Status
+             * @enum {string}
+             */
+            summary_status: "not_requested" | "queued" | "running" | "succeeded" | "stale" | "failed";
         };
         /** RecordingItem */
         RecordingItem: {

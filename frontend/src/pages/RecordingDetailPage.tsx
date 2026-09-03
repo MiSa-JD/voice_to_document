@@ -7,6 +7,7 @@ import {
   createRetranscription,
   getLatestRetranscription,
   getRecording,
+  requestRecordingSummary,
   statusLabel,
   updateRecordingCategory,
   type RecordingDetailResponse,
@@ -31,7 +32,11 @@ export function RecordingDetailPage() {
         const data = await getRecording(id, controller.signal);
         if (controller.signal.aborted) return;
         setState({ kind: 'success', data });
-        if (ACTIVE_STATUSES.has(data.recording.status)) {
+        if (
+          ACTIVE_STATUSES.has(data.recording.status) ||
+          data.summary_status === 'queued' ||
+          data.summary_status === 'running'
+        ) {
           timer = window.setTimeout(load, 3000);
         }
       } catch (error) {
@@ -144,11 +149,7 @@ function RecordingDetail({
 
       <section className="panel detail-section">
         <h2>요약</h2>
-        {data.summary ? (
-          <SummaryPanel summary={data.summary} />
-        ) : (
-          <p className="muted">생성된 요약이 없습니다.</p>
-        )}
+        <SummaryStatusPanel data={data} onReload={onReload} />
       </section>
 
       <section className="panel detail-section">
@@ -609,6 +610,88 @@ function SummaryList({
 }
 
 type CategorySummary = NonNullable<RecordingDetailResponse['summary']>;
+
+function SummaryStatusPanel({
+  data,
+  onReload,
+}: {
+  data: RecordingDetailResponse;
+  onReload: () => void;
+}) {
+  const [submitting, setSubmitting] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const labels = {
+    not_requested:
+      data.summary_policy === 'automatic'
+        ? '자동 요약 등록을 기다리고 있습니다.'
+        : '필요할 때 요약을 요청할 수 있습니다.',
+    queued: '요약 생성 순서를 기다리고 있습니다.',
+    running: '요약을 생성하고 있습니다.',
+    succeeded: '최신 transcript의 요약입니다.',
+    stale: '수정 전 요약이 있으며 최신 내용에는 표시하지 않습니다.',
+    failed: `요약 생성에 실패했습니다.${data.summary_job?.error_message ? ` ${data.summary_job.error_message}` : ''}`,
+  };
+
+  const submit = async () => {
+    if (submitting || !data.summary_can_request) return;
+    setSubmitting(true);
+    setMessage(null);
+    let accepted = false;
+    try {
+      const result = await requestRecordingSummary(
+        data.recording.id,
+        data.recording.revision,
+      );
+      setMessage(
+        result.created
+          ? '요약을 요청했습니다.'
+          : '같은 요약 요청이 이미 등록되어 있습니다.',
+      );
+      accepted = true;
+      onReload();
+    } catch (error) {
+      if (error instanceof ApiError && error.code === 'REVISION_CONFLICT') {
+        setMessage('다른 변경이 먼저 반영되어 최신 내용을 다시 불러옵니다.');
+        onReload();
+      } else if (error instanceof ApiError && error.status === 422) {
+        setMessage(
+          `${error.message} 처리 상태를 확인한 뒤 다시 시도해 주세요.`,
+        );
+      } else {
+        setMessage(
+          error instanceof ApiError
+            ? error.message
+            : '요약을 요청하지 못했습니다. 연결을 확인하고 다시 시도해 주세요.',
+        );
+      }
+    } finally {
+      if (!accepted) setSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="summary-status" aria-live="polite">
+      <p>{labels[data.summary_status]}</p>
+      {data.summary && <SummaryPanel summary={data.summary} />}
+      {data.summary_can_request && (
+        <button
+          type="button"
+          disabled={submitting}
+          onClick={() => void submit()}
+        >
+          {submitting
+            ? '요청 중…'
+            : data.summary_status === 'failed'
+              ? '요약 다시 시도'
+              : data.summary_status === 'stale'
+                ? '최신 요약 요청'
+                : '요약 요청'}
+        </button>
+      )}
+      {message && <p className="category-message">{message}</p>}
+    </div>
+  );
+}
 
 function SummaryPanel({ summary }: { summary: CategorySummary }) {
   const facts = (items: Array<{ text: string }>) =>
