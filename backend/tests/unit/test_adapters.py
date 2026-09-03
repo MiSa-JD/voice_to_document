@@ -41,8 +41,7 @@ def test_review_fixture_includes_local_document_classification() -> None:
 
     assert transcript.needs_speaker_review is True
     assert adapters.classify(REVIEW_HASH).category == "기타"
-    with pytest.raises(ValueError, match="no summary"):
-        adapters.summarize(transcript, "기타")
+    assert adapters.summarize(transcript, "기타").template == "other"
 
 
 def test_unknown_content_hash_is_rejected() -> None:

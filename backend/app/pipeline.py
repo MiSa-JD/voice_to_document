@@ -280,7 +280,19 @@ class FakePipelineHandler:
             source,
         )
         self._write_classified_transcript_artifacts(classified)
-        if applied.category in self.settings.auto_summary_categories:
+        with connect(self.settings.database_path) as connection:
+            had_summary = (
+                connection.execute(
+                    """
+                    SELECT 1 FROM artifacts
+                    WHERE recording_id = ? AND kind = 'summary_json' AND revision < ?
+                    LIMIT 1
+                    """,
+                    (job.recording_id, transcript.revision),
+                ).fetchone()
+                is not None
+            )
+        if had_summary or applied.category in self.settings.auto_summary_categories:
             transition_and_enqueue(
                 self.settings.database_path,
                 job.recording_id,
@@ -423,14 +435,26 @@ class FakePipelineHandler:
             revision,
             schema_version=MARKDOWN_SCHEMA_VERSION,
         )
-        if had_summary:
-            enqueue_job(
+        category = str(recording["category"])
+        if had_summary or category in self.settings.auto_summary_categories:
+            result = enqueue_job(
                 self.settings.database_path,
                 job.recording_id,
                 "summarize",
                 revision,
-                summary_settings_fingerprint(self.summary_adapter, str(recording["category"])),
+                summary_settings_fingerprint(self.summary_adapter, category),
             )
+            status = RecordingStatus(str(recording["status"]))
+            if result.created and status in {
+                RecordingStatus.READY_FOR_SUMMARY,
+                RecordingStatus.COMPLETED,
+                RecordingStatus.FAILED,
+            }:
+                transition_recording(
+                    self.settings.database_path,
+                    job.recording_id,
+                    RecordingStatus.SUMMARIZING,
+                )
 
     def _recording(self, recording_id: str) -> sqlite3.Row:
         with connect(self.settings.database_path) as connection:

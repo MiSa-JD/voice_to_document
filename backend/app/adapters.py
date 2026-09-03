@@ -12,6 +12,7 @@ from app.schema import (
     Classification,
     Segment,
     Transcript,
+    summary_template_for_category,
     validate_summary_evidence,
 )
 
@@ -81,8 +82,9 @@ class FakeAdapters:
 
     def summarize(self, transcript: Transcript, category: str) -> CategorySummary:
         value = self._expected(transcript.content_sha256).get("summary")
-        if value is None:
-            raise ValueError("fake document fixture has no summary")
+        template = summary_template_for_category(category)
+        if not isinstance(value, dict) or value.get("template") != template:
+            value = _fallback_summary(transcript, template)
         summary: CategorySummary = TypeAdapter(CategorySummary).validate_python(value)
         by_time = {(item.start_ms, item.end_ms): item.id for item in transcript.segments}
         payload = summary.model_dump(mode="json")
@@ -127,3 +129,52 @@ def _evidence_values(value: object) -> list[dict[str, object]]:
         for item in value:
             results.extend(_evidence_values(item))
     return results
+
+
+def _fallback_summary(transcript: Transcript, template: str) -> dict[str, object]:
+    segment = transcript.segments[0]
+    evidence = [
+        {
+            "segment_id": str(segment.id),
+            "start_ms": segment.start_ms,
+            "end_ms": segment.end_ms,
+            "quote": segment.text,
+        }
+    ]
+    fact = {"text": segment.text, "evidence": evidence}
+    values: dict[str, dict[str, object]] = {
+        "lecture": {
+            "template": "lecture",
+            "core_topics": [fact],
+            "concepts": [],
+            "examples": [],
+            "review_items": [],
+        },
+        "meeting": {
+            "template": "meeting",
+            "purpose": fact,
+            "discussion": [],
+            "decisions": [],
+            "action_items": [],
+            "open_questions": [],
+        },
+        "daily_conversation": {
+            "template": "daily_conversation",
+            "main_topics": [fact],
+            "agreements": [],
+            "reminders": [],
+        },
+        "game_list": {
+            "template": "game_list",
+            "games": [fact],
+            "preferences": [],
+            "follow_ups": [],
+        },
+        "other": {
+            "template": "other",
+            "key_summary": fact,
+            "key_facts": [],
+            "follow_ups": [],
+        },
+    }
+    return values[template]

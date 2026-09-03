@@ -131,6 +131,9 @@ def test_fake_retranscription_swaps_atomically_preserves_history_and_clears_hint
     assert dict(request_row) == {"content_hint": None, "terms_json": None}
     assert artifact_revisions == {1, 2}
     assert rejection_count == 1
+    stale = client.get(f"/api/recordings/{recording_id}").json()
+    assert stale["summary_status"] == "stale"
+    assert stale["summary"] is None
     history = settings.app_data_dir / "history" / recording_id / "1"
     assert (history / "transcript_json.json").is_file()
     assert (history / "transcript_markdown.md").is_file()
@@ -175,6 +178,57 @@ def test_manual_category_survives_retranscription_and_automatic_reclassification
     assert transcript.classification is not None
     assert transcript.classification.category == "강의"
     assert transcript.classification.confidence is None
+
+
+def test_manually_requested_summary_is_regenerated_after_retranscription(
+    settings_values: dict[str, Any],
+) -> None:
+    settings = Settings(**{**settings_values, "AUTO_SUMMARY_CATEGORIES": "강의"})
+    client, recording_id = _completed(settings)
+    handler = FakePipelineHandler(settings, logging.getLogger("test"))
+    requested = client.post(
+        f"/api/recordings/{recording_id}/summary",
+        json={"expected_revision": 1},
+    )
+    assert requested.status_code == 202
+    while process_one_job(settings.database_path, handler, logging.getLogger("test")):
+        pass
+    assert client.get(f"/api/recordings/{recording_id}").json()["summary_status"] == "succeeded"
+
+    accepted = client.post(
+        f"/api/recordings/{recording_id}/retranscriptions",
+        json=_request(1),
+    )
+    assert accepted.status_code == 202
+    assert process_one_job(settings.database_path, handler, logging.getLogger("test"))
+    stale = client.get(f"/api/recordings/{recording_id}").json()
+    assert stale["recording"]["revision"] == 2
+    assert stale["summary_status"] == "stale"
+    assert stale["summary"] is None
+
+    while process_one_job(settings.database_path, handler, logging.getLogger("test")):
+        pass
+    latest = client.get(f"/api/recordings/{recording_id}").json()
+    assert latest["summary_status"] == "succeeded"
+    assert latest["summary"] is not None
+    with connect(settings.database_path) as connection:
+        count = connection.execute(
+            """
+            SELECT COUNT(*) FROM jobs
+            WHERE recording_id = ? AND kind = 'summarize' AND input_revision = 2
+            """,
+            (recording_id,),
+        ).fetchone()[0]
+        artifact_revision = connection.execute(
+            """
+            SELECT revision FROM artifacts
+            WHERE recording_id = ? AND kind = 'summary_json'
+            ORDER BY revision DESC LIMIT 1
+            """,
+            (recording_id,),
+        ).fetchone()[0]
+    assert count == 1
+    assert artifact_revision == 2
 
 
 class FailingAdapters(FakeAdapters):
