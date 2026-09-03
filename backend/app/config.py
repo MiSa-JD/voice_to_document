@@ -111,6 +111,8 @@ class Settings(BaseSettings):
 
     @property
     def auto_summary_categories(self) -> tuple[str, ...]:
+        if not self.auto_summary_categories_csv.strip():
+            return ()
         return parse_categories(
             self.auto_summary_categories_csv,
             setting_name="AUTO_SUMMARY_CATEGORIES",

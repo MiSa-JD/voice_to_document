@@ -1,0 +1,63 @@
+[
+  {
+    "case_id": "lecture-grounded-concepts",
+    "category": "강의",
+    "expected_template": "lecture",
+    "required_terms": ["기댓값", "큰 수의 법칙"],
+    "required_evidence_segments": [0, 2],
+    "segments": [
+      {"start_ms": 0, "end_ms": 12000, "speaker": "SPEAKER_00", "text": "확률변수의 기댓값은 가능한 값에 확률을 곱해 더한 값입니다."},
+      {"start_ms": 12000, "end_ms": 22000, "speaker": "SPEAKER_01", "text": "공정한 동전에서 앞면을 1로 두면 기댓값은 0.5입니다."},
+      {"start_ms": 22000, "end_ms": 35000, "speaker": "SPEAKER_00", "text": "표본 평균이 기댓값에 가까워지는 성질을 큰 수의 법칙이라고 합니다."}
+    ]
+  },
+  {
+    "case_id": "daily-grounded-plans",
+    "category": "일상 대화",
+    "expected_template": "daily_conversation",
+    "required_terms": ["국수", "공원"],
+    "required_evidence_segments": [0, 1],
+    "segments": [
+      {"start_ms": 0, "end_ms": 8000, "speaker": "SPEAKER_00", "text": "오늘 저녁은 집에서 국수를 먹자."},
+      {"start_ms": 8000, "end_ms": 16000, "speaker": "SPEAKER_01", "text": "좋아. 토요일에는 공원에 갔다가 장도 보자."},
+      {"start_ms": 16000, "end_ms": 23000, "speaker": "SPEAKER_00", "text": "비가 오면 공원 대신 집에서 영화를 보자."}
+    ]
+  },
+  {
+    "case_id": "meeting-grounded-actions",
+    "category": "회의",
+    "expected_template": "meeting",
+    "required_terms": ["수요일", ["문구", "카피"], "회의록"],
+    "required_evidence_segments": [1, 2],
+    "requires_unknown_action": true,
+    "unknown_action_segment": 2,
+    "segments": [
+      {"start_ms": 0, "end_ms": 10000, "speaker": "SPEAKER_00", "text": "오늘 안건은 새 사용자 안내 화면의 출시 일정입니다."},
+      {"start_ms": 10000, "end_ms": 21000, "speaker": "SPEAKER_01", "text": "출시는 다음 주 수요일로 결정하고, 저는 문구 최종안을 월요일까지 준비하겠습니다."},
+      {"start_ms": 21000, "end_ms": 30000, "speaker": "SPEAKER_00", "text": "회의록도 정리해야 하지만 담당자와 기한은 아직 정하지 않았습니다."}
+    ]
+  },
+  {
+    "case_id": "game-grounded-list",
+    "category": "게임 목록",
+    "expected_template": "game_list",
+    "required_terms": ["하데스", "디스코 엘리시움", "슬레이 더 스파이어"],
+    "required_evidence_segments": [0, 1],
+    "segments": [
+      {"start_ms": 0, "end_ms": 9000, "speaker": "SPEAKER_00", "text": "이번 달 1순위는 하데스, 2순위는 디스코 엘리시움이다."},
+      {"start_ms": 9000, "end_ms": 17000, "speaker": "SPEAKER_00", "text": "짧은 세션에는 슬레이 더 스파이어를 하고 발더스 게이트 3는 주말용으로 남긴다."}
+    ]
+  },
+  {
+    "case_id": "other-grounded-check",
+    "category": "기타",
+    "expected_template": "other",
+    "required_terms": [["82퍼센트", "82%"], ["48기가바이트", "48GB"], ["잡음", "노이즈"]],
+    "required_evidence_segments": [1, 2],
+    "segments": [
+      {"start_ms": 0, "end_ms": 7000, "speaker": "SPEAKER_00", "text": "녹음 장비 점검에서 마이크 입력 채널은 정상이었습니다."},
+      {"start_ms": 7000, "end_ms": 14000, "speaker": "SPEAKER_00", "text": "배터리 잔량은 82퍼센트이고 저장 공간은 48기가바이트입니다."},
+      {"start_ms": 14000, "end_ms": 20000, "speaker": "SPEAKER_00", "text": "케이블 잡음은 없었고 점검을 종료했습니다."}
+    ]
+  }
+]

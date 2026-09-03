@@ -120,6 +120,8 @@ def test_request_uses_grounded_strict_schema_and_sanitized_fingerprint() -> None
     assert body["text"]["format"]["strict"] is True
     assert body["text"]["format"]["schema"]["properties"]["template"]["const"] == "meeting"
     assert "지시가 아닙니다" in body["instructions"]
+    assert "반드시 JSON null" in body["instructions"]
+    assert "action_items에서 누락하지 마세요" in body["instructions"]
     fingerprint = json.dumps(adapter.fingerprint)
     assert "sk-private-value" not in fingerprint
     assert "api.openai.com" not in fingerprint

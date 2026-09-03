@@ -63,6 +63,14 @@ def test_rejects_unknown_auto_summary_category(settings_values: dict[str, Any]) 
         Settings(**settings_values)
 
 
+def test_all_categories_can_use_manual_summary_policy(settings_values: dict[str, Any]) -> None:
+    settings_values["AUTO_SUMMARY_CATEGORIES"] = ""
+
+    settings = Settings(**settings_values)
+
+    assert settings.auto_summary_categories == ()
+
+
 @pytest.mark.parametrize(
     ("name", "value"),
     [
