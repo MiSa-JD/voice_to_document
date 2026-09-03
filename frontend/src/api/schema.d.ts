@@ -236,6 +236,8 @@ export interface components {
             assignee?: string | null;
             /** Due Date */
             due_date?: string | null;
+            /** Evidence */
+            evidence: components["schemas"]["Evidence"][];
             /** Task */
             task: string;
         };
@@ -330,6 +332,48 @@ export interface components {
             /** Revision */
             revision: number;
         };
+        /** DailyConversationSummary */
+        DailyConversationSummary: {
+            /** Agreements */
+            agreements: components["schemas"]["SummaryFact"][];
+            /** Main Topics */
+            main_topics: components["schemas"]["SummaryFact"][];
+            /** Reminders */
+            reminders: components["schemas"]["SummaryFact"][];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            template: "daily_conversation";
+        };
+        /** Evidence */
+        Evidence: {
+            /** End Ms */
+            end_ms: number;
+            /** Quote */
+            quote?: string | null;
+            /**
+             * Segment Id
+             * Format: uuid
+             */
+            segment_id: string;
+            /** Start Ms */
+            start_ms: number;
+        };
+        /** GameListSummary */
+        GameListSummary: {
+            /** Follow Ups */
+            follow_ups: components["schemas"]["SummaryFact"][];
+            /** Games */
+            games: components["schemas"]["SummaryFact"][];
+            /** Preferences */
+            preferences: components["schemas"]["SummaryFact"][];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            template: "game_list";
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -358,18 +402,51 @@ export interface components {
             /** Updated At */
             updated_at: string;
         };
+        /** LectureSummary */
+        LectureSummary: {
+            /** Concepts */
+            concepts: components["schemas"]["SummaryFact"][];
+            /** Core Topics */
+            core_topics: components["schemas"]["SummaryFact"][];
+            /** Examples */
+            examples: components["schemas"]["SummaryFact"][];
+            /** Review Items */
+            review_items: components["schemas"]["SummaryFact"][];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            template: "lecture";
+        };
         /** MeetingSummary */
         MeetingSummary: {
             /** Action Items */
             action_items: components["schemas"]["ActionItem"][];
             /** Decisions */
-            decisions: string[];
+            decisions: components["schemas"]["SummaryFact"][];
             /** Discussion */
-            discussion: string[];
+            discussion: components["schemas"]["SummaryFact"][];
             /** Open Questions */
-            open_questions: string[];
-            /** Purpose */
-            purpose: string;
+            open_questions: components["schemas"]["SummaryFact"][];
+            purpose: components["schemas"]["SummaryFact"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            template: "meeting";
+        };
+        /** OtherSummary */
+        OtherSummary: {
+            /** Follow Ups */
+            follow_ups: components["schemas"]["SummaryFact"][];
+            /** Key Facts */
+            key_facts: components["schemas"]["SummaryFact"][];
+            key_summary: components["schemas"]["SummaryFact"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            template: "other";
         };
         /** PersonCreateRequest */
         PersonCreateRequest: {
@@ -431,7 +508,8 @@ export interface components {
             segments: components["schemas"]["SegmentResponse"][];
             /** Speakers */
             speakers: components["schemas"]["RecordingSpeakerResponse"][];
-            summary: components["schemas"]["MeetingSummary"] | null;
+            /** Summary */
+            summary: (components["schemas"]["LectureSummary"] | components["schemas"]["MeetingSummary"] | components["schemas"]["DailyConversationSummary"] | components["schemas"]["GameListSummary"] | components["schemas"]["OtherSummary"]) | null;
         };
         /** RecordingItem */
         RecordingItem: {
@@ -706,6 +784,13 @@ export interface components {
             margin: number;
             /** Second Best Score */
             second_best_score: number;
+        };
+        /** SummaryFact */
+        SummaryFact: {
+            /** Evidence */
+            evidence: components["schemas"]["Evidence"][];
+            /** Text */
+            text: string;
         };
         /** ValidationError */
         ValidationError: {

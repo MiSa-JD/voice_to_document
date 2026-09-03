@@ -7,11 +7,11 @@ from pathlib import Path
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, TypeAdapter
 
 from app.config import Settings
 from app.db import connect, migrate_database, utc_now
-from app.schema import MeetingSummary, RecordingStatus
+from app.schema import CategorySummary, RecordingStatus
 
 PAGE_SIZE = 50
 
@@ -152,7 +152,7 @@ class RecordingDetailResponse(BaseModel):
     segments: list[SegmentResponse]
     artifacts: list[ArtifactResponse]
     jobs: list[JobResponse]
-    summary: MeetingSummary | None
+    summary: CategorySummary | None
     allowed_categories: list[str]
 
 
@@ -507,7 +507,9 @@ def _segment_response(row: dict[str, Any]) -> SegmentResponse:
         raise ApiProblem(500, "INVALID_SEGMENT", "발화 구간을 읽을 수 없습니다.") from error
 
 
-def _load_summary(root: Path, artifacts: list[Any], current_revision: int) -> MeetingSummary | None:
+def _load_summary(
+    root: Path, artifacts: list[Any], current_revision: int
+) -> CategorySummary | None:
     row = next(
         (
             artifact
@@ -524,6 +526,6 @@ def _load_summary(root: Path, artifacts: list[Any], current_revision: int) -> Me
         raise ApiProblem(500, "INVALID_ARTIFACT_PATH", "결과 파일 경로가 유효하지 않습니다.")
     try:
         value = json.loads(path.read_text(encoding="utf-8"))["summary"]
-        return MeetingSummary.model_validate(value)
+        return TypeAdapter(CategorySummary).validate_python(value)
     except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
         raise ApiProblem(500, "INVALID_ARTIFACT", "요약 결과를 읽을 수 없습니다.") from error

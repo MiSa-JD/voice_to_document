@@ -36,7 +36,7 @@ from app.renderer import (
 )
 from app.retranscriptions import commit_retranscription, request_for_job
 from app.runtime import PermanentJobError, RetryableJobError
-from app.schema import Classification, MeetingSummary, RecordingStatus, Segment, Transcript
+from app.schema import Classification, RecordingStatus, Segment, Transcript
 from app.speaker_clips import generate_speaker_clips
 from app.speaker_embeddings import (
     FakeSpeakerEmbeddingAdapter,
@@ -45,6 +45,7 @@ from app.speaker_embeddings import (
     finalize_speaker_embeddings,
 )
 from app.state import enqueue_job, transition_and_enqueue, transition_recording
+from app.summary_renderer import render_summary_markdown
 
 
 class TranscriptRendererError(RuntimeError):
@@ -302,7 +303,7 @@ class FakePipelineHandler:
             job.recording_id,
             "summary_markdown",
             base / f"{job.recording_id}.md",
-            _summary_markdown(summary).encode("utf-8"),
+            render_summary_markdown(summary, category),
             revision,
         )
         if RecordingStatus(str(recording["status"])) is not RecordingStatus.COMPLETED:
@@ -688,26 +689,3 @@ class FakePipelineHandler:
 
 def _json_bytes(value: dict[str, Any]) -> bytes:
     return (json.dumps(value, ensure_ascii=False, sort_keys=True, indent=2) + "\n").encode()
-
-
-def _summary_markdown(summary: MeetingSummary) -> str:
-    lines = [
-        "# 요약",
-        "",
-        "## 목적",
-        summary.purpose,
-        "",
-        "## 논의 내용",
-        *[f"- {item}" for item in summary.discussion],
-        "",
-        "## 결정 사항",
-        *[f"- {item}" for item in summary.decisions],
-        "",
-        "## 할 일",
-        *[f"- {item.task}" for item in summary.action_items],
-        "",
-        "## 미해결 사항",
-        *([f"- {item}" for item in summary.open_questions] or ["- 없음"]),
-        "",
-    ]
-    return "\n".join(lines)

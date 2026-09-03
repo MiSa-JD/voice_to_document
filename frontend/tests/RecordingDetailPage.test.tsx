@@ -99,11 +99,32 @@ test('transcript, category, summary, job 이력을 표시한다', async () => {
                 },
               ],
               summary: {
-                purpose: '초안 준비 계획 확인',
-                discussion: ['회의 목표를 확인함'],
-                decisions: ['초안을 준비함'],
+                template: 'meeting',
+                purpose: {
+                  text: '초안 준비 계획 확인',
+                  evidence: [
+                    {
+                      segment_id: 'segment-id',
+                      start_ms: 0,
+                      end_ms: 900,
+                    },
+                  ],
+                },
+                discussion: [],
+                decisions: [],
                 action_items: [
-                  { assignee: null, due_date: null, task: '초안 준비' },
+                  {
+                    assignee: null,
+                    due_date: null,
+                    task: '초안 준비',
+                    evidence: [
+                      {
+                        segment_id: 'segment-id',
+                        start_ms: 0,
+                        end_ms: 900,
+                      },
+                    ],
+                  },
                 ],
                 open_questions: [],
               },

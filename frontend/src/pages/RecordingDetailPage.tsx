@@ -145,23 +145,7 @@ function RecordingDetail({
       <section className="panel detail-section">
         <h2>요약</h2>
         {data.summary ? (
-          <div className="summary-grid">
-            <div>
-              <h3>목적</h3>
-              <p>{data.summary.purpose}</p>
-            </div>
-            <SummaryList title="논의 내용" items={data.summary.discussion} />
-            <SummaryList title="결정 사항" items={data.summary.decisions} />
-            <SummaryList
-              title="할 일"
-              items={data.summary.action_items.map((item) => item.task)}
-            />
-            <SummaryList
-              title="미해결 사항"
-              items={data.summary.open_questions}
-              empty="없음"
-            />
-          </div>
+          <SummaryPanel summary={data.summary} />
         ) : (
           <p className="muted">생성된 요약이 없습니다.</p>
         )}
@@ -622,6 +606,113 @@ function SummaryList({
       )}
     </div>
   );
+}
+
+type CategorySummary = NonNullable<RecordingDetailResponse['summary']>;
+
+function SummaryPanel({ summary }: { summary: CategorySummary }) {
+  const facts = (items: Array<{ text: string }>) =>
+    items.map((item) => item.text);
+  switch (summary.template) {
+    case 'lecture':
+      return (
+        <div className="summary-grid">
+          <SummaryList title="핵심 주제" items={facts(summary.core_topics)} />
+          <SummaryList
+            title="개념"
+            items={facts(summary.concepts)}
+            empty="없음"
+          />
+          <SummaryList
+            title="예시"
+            items={facts(summary.examples)}
+            empty="없음"
+          />
+          <SummaryList
+            title="복습 항목"
+            items={facts(summary.review_items)}
+            empty="없음"
+          />
+        </div>
+      );
+    case 'meeting':
+      return (
+        <div className="summary-grid">
+          <SummaryList title="목적" items={[summary.purpose.text]} />
+          <SummaryList
+            title="논의 내용"
+            items={facts(summary.discussion)}
+            empty="없음"
+          />
+          <SummaryList
+            title="결정 사항"
+            items={facts(summary.decisions)}
+            empty="없음"
+          />
+          <SummaryList
+            title="할 일"
+            items={summary.action_items.map(
+              (item) =>
+                `${item.task} (담당자: ${item.assignee ?? '확인되지 않음'}, 기한: ${item.due_date ?? '확인되지 않음'})`,
+            )}
+            empty="없음"
+          />
+          <SummaryList
+            title="미해결 사항"
+            items={facts(summary.open_questions)}
+            empty="없음"
+          />
+        </div>
+      );
+    case 'daily_conversation':
+      return (
+        <div className="summary-grid">
+          <SummaryList title="주요 화제" items={facts(summary.main_topics)} />
+          <SummaryList
+            title="합의·약속"
+            items={facts(summary.agreements)}
+            empty="없음"
+          />
+          <SummaryList
+            title="기억할 사항"
+            items={facts(summary.reminders)}
+            empty="없음"
+          />
+        </div>
+      );
+    case 'game_list':
+      return (
+        <div className="summary-grid">
+          <SummaryList title="게임" items={facts(summary.games)} />
+          <SummaryList
+            title="선호·평가"
+            items={facts(summary.preferences)}
+            empty="없음"
+          />
+          <SummaryList
+            title="후속 확인"
+            items={facts(summary.follow_ups)}
+            empty="없음"
+          />
+        </div>
+      );
+    case 'other':
+      return (
+        <div className="summary-grid">
+          <SummaryList title="핵심 요약" items={[summary.key_summary.text]} />
+          <SummaryList
+            title="주요 사실"
+            items={facts(summary.key_facts)}
+            empty="없음"
+          />
+          <SummaryList
+            title="후속 항목"
+            items={facts(summary.follow_ups)}
+            empty="없음"
+          />
+        </div>
+      );
+  }
 }
 
 function formatDuration(milliseconds: number) {

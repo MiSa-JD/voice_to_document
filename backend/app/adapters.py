@@ -5,7 +5,9 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from app.schema import Classification, MeetingSummary, Segment, Transcript
+from pydantic import TypeAdapter
+
+from app.schema import CategorySummary, Classification, Segment, Transcript
 
 
 class FakeFixtureNotFoundError(ValueError):
@@ -67,11 +69,11 @@ class FakeAdapters:
             raise ValueError("fake document fixture has no classification")
         return value
 
-    def summarize(self, content_sha256: str) -> MeetingSummary:
+    def summarize(self, content_sha256: str) -> CategorySummary:
         value = self._expected(content_sha256).get("summary")
         if value is None:
             raise ValueError("fake document fixture has no summary")
-        return MeetingSummary.model_validate(value)
+        return TypeAdapter(CategorySummary).validate_python(value)
 
     def _expected(self, content_sha256: str) -> dict[str, Any]:
         fixture = self.fixtures.get(content_sha256)
