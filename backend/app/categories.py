@@ -24,7 +24,11 @@ def parse_categories(value: str, *, setting_name: str = "CATEGORIES") -> tuple[s
 
 def category_slug(display_name: str) -> str:
     value = unicodedata.normalize("NFKC", display_name).strip().casefold()
-    if not value or any(character in value for character in ("/", "\\", "\0")):
+    if (
+        not value
+        or any(character in value for character in ("/", "\\", "\0"))
+        or any(unicodedata.category(character) == "Cc" for character in value)
+    ):
         raise ValueError("category cannot be used as a path")
     slug = re.sub(r"[^\w]+", "-", value, flags=re.UNICODE).strip("-_")
     if not slug or slug in {".", ".."}:

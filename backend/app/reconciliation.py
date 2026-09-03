@@ -6,12 +6,21 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from app.artifacts import write_artifact
+from pydantic import TypeAdapter
+
+from app.artifacts import safe_category_slug, write_artifact, write_summary_artifacts
 from app.db import connect
 from app.document_identity import document_relative_path, ensure_document_identity
 from app.renderer import MARKDOWN_SCHEMA_VERSION, render_transcript_markdown
 from app.repository import record_audit_event
-from app.schema import Classification, Segment, Transcript
+from app.schema import (
+    CategorySummary,
+    Classification,
+    Segment,
+    Transcript,
+    validate_summary_evidence,
+)
+from app.summary_renderer import render_summary_markdown
 
 
 class ReconciliationError(RuntimeError):
@@ -102,6 +111,96 @@ def reconcile_markdown_artifacts(
             record_audit_event(
                 database_path,
                 "markdown_reconciliation_failed",
+                {"error_code": code},
+                recording_id,
+            )
+    return ReconciliationResult(inspected, repaired, failed)
+
+
+def reconcile_summary_artifacts(
+    database_path: Path,
+    transcript_root: Path,
+    document_root: Path,
+    logger: logging.Logger,
+) -> ReconciliationResult:
+    transcript_root = transcript_root.resolve()
+    document_root = document_root.resolve()
+    candidates = sorted(document_root.glob("*/요약/*/revisions/*.json"))
+    inspected = repaired = failed = 0
+    for json_path in candidates:
+        try:
+            value = json.loads(json_path.read_text(encoding="utf-8"))
+            recording_id = str(value["recording_id"])
+            revision = int(value["revision"])
+            category = str(value["category"])
+        except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
+            continue
+        with connect(database_path) as connection:
+            recording = connection.execute(
+                "SELECT revision, category FROM recordings WHERE id = ?", (recording_id,)
+            ).fetchone()
+            rows = connection.execute(
+                """
+                SELECT kind, relative_path FROM artifacts
+                WHERE recording_id = ? AND revision = ?
+                  AND kind IN ('summary_json', 'summary_markdown')
+                """,
+                (recording_id, revision),
+            ).fetchall()
+        markdown_path = json_path.with_suffix(".md")
+        registered = {str(row["kind"]): str(row["relative_path"]) for row in rows}
+        if (
+            registered.get("summary_json") == json_path.relative_to(document_root).as_posix()
+            and registered.get("summary_markdown")
+            == markdown_path.relative_to(document_root).as_posix()
+            and markdown_path.is_file()
+        ):
+            continue
+        inspected += 1
+        try:
+            if (
+                recording is None
+                or int(recording["revision"]) != revision
+                or str(recording["category"]) != category
+                or safe_category_slug(category) != json_path.relative_to(document_root).parts[0]
+            ):
+                raise ReconciliationError("SUMMARY_IDENTITY_MISMATCH")
+            transcript = _rebuild_transcript(database_path, transcript_root, recording_id, revision)
+            summary: CategorySummary = TypeAdapter(CategorySummary).validate_python(
+                value["summary"]
+            )
+            validate_summary_evidence(summary, transcript)
+            markdown = render_summary_markdown(summary, category)
+            write_summary_artifacts(
+                database_path,
+                document_root,
+                recording_id,
+                revision,
+                safe_category_slug(category),
+                json_path.read_bytes(),
+                markdown,
+            )
+            repaired += 1
+            logger.info(
+                "summary_reconciled",
+                extra={"recording_id": recording_id, "stage": "reconciliation"},
+            )
+        except Exception as error:
+            code = (
+                error.code if isinstance(error, ReconciliationError) else "SUMMARY_RECOVERY_FAILED"
+            )
+            failed += 1
+            logger.error(
+                "summary_reconciliation_failed",
+                extra={
+                    "recording_id": recording_id,
+                    "stage": "reconciliation",
+                    "error_code": code,
+                },
+            )
+            record_audit_event(
+                database_path,
+                "summary_reconciliation_failed",
                 {"error_code": code},
                 recording_id,
             )

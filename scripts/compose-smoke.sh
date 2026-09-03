@@ -61,8 +61,8 @@ markdown_count=$(find "$document_host_dir" -mindepth 1 -maxdepth 1 -type f -name
 test "$markdown_count" -eq 1
 summary_markdown_count=$(find "$document_host_dir" -mindepth 2 -type f -name '*.md' | wc -l)
 summary_json_count=$(find "$document_host_dir" -mindepth 2 -type f -name '*.json' | wc -l)
-test "$summary_markdown_count" -eq 1
-test "$summary_json_count" -eq 1
+test "$summary_markdown_count" -ge 1
+test "$summary_json_count" -ge 1
 markdown_path=$(find "$document_host_dir" -mindepth 1 -maxdepth 1 -type f -name '*.md' -print -quit)
 markdown_digest=$(sha256sum "$markdown_path" | awk '{print $1}')
 docker compose restart worker

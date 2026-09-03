@@ -11,7 +11,7 @@ from app.config import Settings
 from app.db import connect
 from app.ingest import ingest_file
 from app.pipeline import FakePipelineHandler
-from app.reconciliation import reconcile_markdown_artifacts
+from app.reconciliation import reconcile_markdown_artifacts, reconcile_summary_artifacts
 from app.runtime import process_one_job
 from fastapi.testclient import TestClient
 
@@ -206,3 +206,85 @@ def test_render_failure_preserves_legacy_file_and_artifact(settings_values: dict
             "SELECT relative_path FROM artifacts WHERE kind = 'transcript_markdown'"
         ).fetchone()["relative_path"]
     assert relative_path == f"{recording_id}/transcript.md"
+
+
+def test_summary_reconciliation_restores_markdown_and_partial_registration(
+    settings_values: dict[str, Any],
+) -> None:
+    settings = Settings(**settings_values)
+    recording_id, _flat_path = _completed_recording(settings)
+    with connect(settings.database_path) as connection:
+        markdown = connection.execute(
+            """
+            SELECT relative_path FROM artifacts
+            WHERE recording_id = ? AND kind = 'summary_markdown'
+            """,
+            (recording_id,),
+        ).fetchone()
+        connection.execute(
+            "DELETE FROM artifacts WHERE recording_id = ? AND kind = 'summary_markdown'",
+            (recording_id,),
+        )
+    markdown_path = settings.document_root / markdown["relative_path"]
+    markdown_path.unlink()
+
+    result = reconcile_summary_artifacts(
+        settings.database_path,
+        settings.transcript_root,
+        settings.document_root,
+        logging.getLogger("test"),
+    )
+
+    assert result == type(result)(inspected=1, repaired=1, failed=0)
+    assert markdown_path.is_file()
+    assert "## 할 일" in markdown_path.read_text(encoding="utf-8")
+    with connect(settings.database_path) as connection:
+        assert (
+            connection.execute(
+                """
+            SELECT COUNT(*) FROM artifacts
+            WHERE recording_id = ? AND kind IN ('summary_json', 'summary_markdown')
+            """,
+                (recording_id,),
+            ).fetchone()[0]
+            == 2
+        )
+
+
+def test_summary_reconciliation_does_not_promote_invalid_json(
+    settings_values: dict[str, Any],
+) -> None:
+    settings = Settings(**settings_values)
+    recording_id, _flat_path = _completed_recording(settings)
+    with connect(settings.database_path) as connection:
+        rows = connection.execute(
+            """
+            SELECT kind, relative_path FROM artifacts
+            WHERE recording_id = ? AND kind IN ('summary_json', 'summary_markdown')
+            """,
+            (recording_id,),
+        ).fetchall()
+        connection.execute(
+            "DELETE FROM artifacts WHERE recording_id = ? AND kind = 'summary_markdown'",
+            (recording_id,),
+        )
+    paths = {str(row["kind"]): settings.document_root / row["relative_path"] for row in rows}
+    paths["summary_json"].write_text('{"private":"invalid"}', encoding="utf-8")
+    paths["summary_markdown"].unlink()
+
+    result = reconcile_summary_artifacts(
+        settings.database_path,
+        settings.transcript_root,
+        settings.document_root,
+        logging.getLogger("test"),
+    )
+
+    assert result.repaired == 0
+    assert not paths["summary_markdown"].exists()
+    with connect(settings.database_path) as connection:
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM artifacts WHERE kind = 'summary_markdown'"
+            ).fetchone()[0]
+            == 0
+        )

@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Literal, cast
 
 from app.adapters import FakeAdapters, FakeFixtureNotFoundError
-from app.artifacts import safe_category_slug, write_artifact
+from app.artifacts import safe_category_slug, write_artifact, write_summary_artifacts
 from app.classification import (
     ClassificationAdapter,
     ClassificationError,
@@ -325,24 +325,14 @@ class FakePipelineHandler:
             "summary_fingerprint": self.summary_adapter.fingerprint,
             "summary": summary.model_dump(mode="json"),
         }
-        base = Path(slug) / "요약"
-        write_artifact(
+        write_summary_artifacts(
             self.settings.database_path,
             self.settings.summary_root,
             job.recording_id,
-            "summary_json",
-            base / f"{job.recording_id}.json",
+            revision,
+            slug,
             _json_bytes(metadata),
-            revision,
-        )
-        write_artifact(
-            self.settings.database_path,
-            self.settings.summary_root,
-            job.recording_id,
-            "summary_markdown",
-            base / f"{job.recording_id}.md",
             render_summary_markdown(summary, category),
-            revision,
         )
         if RecordingStatus(str(recording["status"])) is not RecordingStatus.COMPLETED:
             transition_recording(

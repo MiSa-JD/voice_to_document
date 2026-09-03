@@ -14,7 +14,7 @@ from app.openai_classification import OpenAIClassificationAdapter
 from app.openai_summary import OpenAISummaryAdapter
 from app.pipeline import FakePipelineHandler
 from app.real_pipeline import RealSpeechPipelineHandler
-from app.reconciliation import reconcile_markdown_artifacts
+from app.reconciliation import reconcile_markdown_artifacts, reconcile_summary_artifacts
 from app.runtime import JobHandler, discover_once, process_one_job
 
 
@@ -38,6 +38,12 @@ def run(settings: Settings | None = None, handler: JobHandler | None = None) -> 
 
     migrate_database(config.database_path)
     reconcile_markdown_artifacts(
+        config.database_path,
+        config.transcript_root,
+        config.document_root,
+        logger,
+    )
+    reconcile_summary_artifacts(
         config.database_path,
         config.transcript_root,
         config.document_root,
