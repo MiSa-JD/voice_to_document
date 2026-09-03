@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from enum import StrEnum
-from typing import Annotated, Literal
+from typing import Annotated, Literal, cast
 from uuid import UUID
 
 from pydantic import (
@@ -214,6 +214,20 @@ def summary_template_for_category(category: str) -> str:
         "게임 목록": "game_list",
         "기타": "other",
     }.get(category, "other")
+
+
+def summary_model_for_category(category: str) -> type[StrictModel]:
+    template = summary_template_for_category(category)
+    return cast(
+        type[StrictModel],
+        {
+            "lecture": LectureSummary,
+            "meeting": MeetingSummary,
+            "daily_conversation": DailyConversationSummary,
+            "game_list": GameListSummary,
+            "other": OtherSummary,
+        }[template],
+    )
 
 
 def validate_summary_evidence(summary: CategorySummary, transcript: Transcript) -> None:
