@@ -158,6 +158,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/recordings/{recording_id}/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Request Summary */
+        post: operations["request_summary_api_recordings__recording_id__summary_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/segments/speakers": {
         parameters: {
             query?: never;
@@ -792,6 +809,27 @@ export interface components {
             /** Text */
             text: string;
         };
+        /** SummaryRequest */
+        SummaryRequest: {
+            /** Expected Revision */
+            expected_revision: number;
+        };
+        /** SummaryRequestResponse */
+        SummaryRequestResponse: {
+            /** Created */
+            created: boolean;
+            /** Job Id */
+            job_id: string;
+            /**
+             * Job Status
+             * @enum {string}
+             */
+            job_status: "queued" | "running" | "succeeded";
+            /** Recording Id */
+            recording_id: string;
+            /** Revision */
+            revision: number;
+        };
         /** ValidationError */
         ValidationError: {
             /** Context */
@@ -1210,6 +1248,59 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SpeakerAssignmentResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    request_summary_api_recordings__recording_id__summary_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                recording_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SummaryRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SummaryRequestResponse"];
                 };
             };
             /** @description Not Found */

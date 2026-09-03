@@ -6,12 +6,13 @@ import uuid
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Response
 from pydantic import BaseModel, Field, TypeAdapter
 
 from app.config import Settings
 from app.db import connect, migrate_database, utc_now
 from app.schema import CategorySummary, RecordingStatus
+from app.summary import configured_summary_settings_fingerprint
 
 PAGE_SIZE = 50
 
@@ -174,6 +175,18 @@ class CategoryUpdateResponse(BaseModel):
     category_source: Literal["manual"] = "manual"
     revision: int
     render_job: CategoryRenderJobResponse
+
+
+class SummaryRequest(BaseModel):
+    expected_revision: int = Field(ge=1)
+
+
+class SummaryRequestResponse(BaseModel):
+    recording_id: str
+    revision: int
+    created: bool
+    job_id: str
+    job_status: Literal["queued", "running", "succeeded"]
 
 
 def create_recordings_router(settings: Settings) -> APIRouter:
@@ -366,6 +379,165 @@ def create_recordings_router(settings: Settings) -> APIRouter:
             jobs=[JobResponse.model_validate(dict(row)) for row in jobs],
             summary=_load_summary(settings.summary_root, artifacts, int(recording["revision"])),
             allowed_categories=list(settings.categories),
+        )
+
+    @router.post(
+        "/{recording_id}/summary",
+        response_model=SummaryRequestResponse,
+        status_code=202,
+        responses={
+            404: {"model": ApiErrorResponse},
+            409: {"model": ApiErrorResponse},
+            422: {"model": ApiErrorResponse},
+        },
+    )
+    def request_summary(
+        recording_id: str, request: SummaryRequest, response: Response
+    ) -> SummaryRequestResponse:
+        migrate_database(settings.database_path)
+        with connect(settings.database_path) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                recording = connection.execute(
+                    "SELECT status, category, revision FROM recordings WHERE id = ?",
+                    (recording_id,),
+                ).fetchone()
+                if recording is None:
+                    raise ApiProblem(404, "RECORDING_NOT_FOUND", "녹음을 찾을 수 없습니다.")
+                revision = int(recording["revision"])
+                if revision != request.expected_revision:
+                    raise ApiProblem(
+                        409,
+                        "REVISION_CONFLICT",
+                        "다른 변경이 먼저 반영되었습니다. 최신 내용을 다시 확인해 주세요.",
+                        {"current_revision": revision},
+                    )
+                category = recording["category"]
+                if category is None:
+                    raise ApiProblem(
+                        422,
+                        "SUMMARY_NOT_READY",
+                        "분류가 완료된 뒤 요약을 요청할 수 있습니다.",
+                    )
+                active_input = connection.execute(
+                    """
+                    SELECT id, kind FROM jobs
+                    WHERE recording_id = ? AND kind IN ('classify', 'render')
+                      AND status IN ('queued', 'running')
+                    ORDER BY created_at LIMIT 1
+                    """,
+                    (recording_id,),
+                ).fetchone()
+                if active_input is not None:
+                    code = (
+                        "CLASSIFICATION_IN_PROGRESS"
+                        if active_input["kind"] == "classify"
+                        else "RENDER_IN_PROGRESS"
+                    )
+                    raise ApiProblem(
+                        422,
+                        code,
+                        "입력 문서를 처리하는 중입니다. 완료 후 다시 요청해 주세요.",
+                        {"job_id": str(active_input["id"])},
+                    )
+                fingerprint = configured_summary_settings_fingerprint(settings, str(category))
+                existing = connection.execute(
+                    """
+                    SELECT id, status FROM jobs
+                    WHERE recording_id = ? AND kind = 'summarize' AND input_revision = ?
+                      AND settings_fingerprint = ?
+                      AND status IN ('queued', 'running', 'succeeded')
+                    ORDER BY created_at DESC LIMIT 1
+                    """,
+                    (recording_id, revision, fingerprint),
+                ).fetchone()
+                if existing is not None:
+                    connection.commit()
+                    response.status_code = 200
+                    return SummaryRequestResponse(
+                        recording_id=recording_id,
+                        revision=revision,
+                        created=False,
+                        job_id=str(existing["id"]),
+                        job_status=existing["status"],
+                    )
+                active_summary = connection.execute(
+                    """
+                    SELECT id FROM jobs WHERE recording_id = ? AND kind = 'summarize'
+                      AND status IN ('queued', 'running') LIMIT 1
+                    """,
+                    (recording_id,),
+                ).fetchone()
+                if active_summary is not None:
+                    raise ApiProblem(
+                        422,
+                        "SUMMARY_IN_PROGRESS",
+                        "다른 입력의 요약을 처리하는 중입니다.",
+                        {"job_id": str(active_summary["id"])},
+                    )
+                status = RecordingStatus(str(recording["status"]))
+                if status not in {
+                    RecordingStatus.READY_FOR_SUMMARY,
+                    RecordingStatus.COMPLETED,
+                    RecordingStatus.FAILED,
+                }:
+                    raise ApiProblem(
+                        422,
+                        "SUMMARY_NOT_READY",
+                        "현재 처리 단계에서는 요약을 요청할 수 없습니다.",
+                    )
+                job_id = str(uuid.uuid4())
+                timestamp = utc_now()
+                connection.execute(
+                    """
+                    INSERT INTO jobs(
+                        id, recording_id, kind, status, attempts, available_at,
+                        created_at, updated_at, input_revision, settings_fingerprint
+                    ) VALUES (?, ?, 'summarize', 'queued', 0, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        job_id,
+                        recording_id,
+                        timestamp,
+                        timestamp,
+                        timestamp,
+                        revision,
+                        fingerprint,
+                    ),
+                )
+                connection.execute(
+                    """
+                    UPDATE recordings SET status = 'SUMMARIZING', last_error_code = NULL,
+                        last_error_message = NULL, updated_at = ? WHERE id = ?
+                    """,
+                    (timestamp, recording_id),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO audit_events(id, recording_id, event_type, details_json, created_at)
+                    VALUES (?, ?, 'summary_requested', ?, ?)
+                    """,
+                    (
+                        str(uuid.uuid4()),
+                        recording_id,
+                        json.dumps(
+                            {"revision": revision, "category": category},
+                            ensure_ascii=False,
+                            sort_keys=True,
+                        ),
+                        timestamp,
+                    ),
+                )
+                connection.commit()
+            except (ApiProblem, sqlite3.Error):
+                connection.rollback()
+                raise
+        return SummaryRequestResponse(
+            recording_id=recording_id,
+            revision=revision,
+            created=True,
+            job_id=job_id,
+            job_status="queued",
         )
 
     @router.patch(

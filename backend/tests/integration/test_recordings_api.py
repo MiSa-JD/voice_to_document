@@ -79,12 +79,14 @@ def test_completed_recording_list_and_detail(settings_values: dict[str, Any]) ->
     )
     assert {artifact["kind"] for artifact in payload["artifacts"]} == {
         "recording_audio",
+        "summary_json",
+        "summary_markdown",
         "transcript_json",
         "transcript_markdown",
     }
     assert {job["status"] for job in payload["jobs"]} == {"succeeded"}
-    assert len(payload["jobs"]) == 3
-    assert payload["summary"] is None
+    assert len(payload["jobs"]) == 4
+    assert payload["summary"]["template"] == "meeting"
     assert "source_path" not in detail.text
     assert "relative_path" not in detail.text
 

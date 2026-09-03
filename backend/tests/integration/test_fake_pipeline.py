@@ -14,7 +14,6 @@ from app.ingest import ingest_file
 from app.openai_classification import OpenAIClassificationAdapter
 from app.pipeline import FakePipelineHandler
 from app.runtime import process_one_job
-from app.state import enqueue_job
 from fastapi.testclient import TestClient
 
 
@@ -74,6 +73,8 @@ def test_fake_speech_with_openai_document_writes_json_and_markdown(
     assert len(requests) == 1
     assert {row["kind"] for row in artifacts} == {
         "recording_audio",
+        "summary_json",
+        "summary_markdown",
         "transcript_json",
         "transcript_markdown",
     }
@@ -112,9 +113,12 @@ def test_complete_fixture_reaches_completed_with_revision_matched_artifacts(
         {"kind": "transcribe", "status": "succeeded"},
         {"kind": "finalize_speakers", "status": "succeeded"},
         {"kind": "classify", "status": "succeeded"},
+        {"kind": "summarize", "status": "succeeded"},
     ]
     assert [row["kind"] for row in artifacts] == [
         "recording_audio",
+        "summary_json",
+        "summary_markdown",
         "transcript_json",
         "transcript_markdown",
     ]
@@ -132,7 +136,7 @@ def test_complete_fixture_reaches_completed_with_revision_matched_artifacts(
 
     assert not process_one_job(settings.database_path, handler, logging.getLogger("test"))
     with connect(settings.database_path) as connection:
-        assert connection.execute("SELECT COUNT(*) FROM artifacts").fetchone()[0] == 3
+        assert connection.execute("SELECT COUNT(*) FROM artifacts").fetchone()[0] == 5
 
 
 def test_review_fixture_keeps_flag_but_generates_temporary_speaker_markdown(
@@ -237,6 +241,8 @@ def test_duplicate_input_and_handler_restart_keep_one_artifact_per_kind(
         ).fetchall()
     assert [dict(row) for row in rows] == [
         {"kind": "recording_audio", "revision": 1, "count": 1},
+        {"kind": "summary_json", "revision": 1, "count": 1},
+        {"kind": "summary_markdown", "revision": 1, "count": 1},
         {"kind": "transcript_json", "revision": 1, "count": 1},
         {"kind": "transcript_markdown", "revision": 1, "count": 1},
     ]
@@ -267,9 +273,6 @@ def test_speaker_edit_rerenders_without_retranscription_and_refreshes_summary(
     handler = FakePipelineHandler(settings, logging.getLogger("test"))
     while process_one_job(settings.database_path, handler, logging.getLogger("test")):
         pass
-    enqueue_job(settings.database_path, recording_id, "summarize", 1, "test-summary")
-    assert process_one_job(settings.database_path, handler, logging.getLogger("test"))
-
     client = TestClient(create_app(settings))
     person = client.post("/api/persons", json={"display_name": "검토자"}).json()
     changed = client.put(

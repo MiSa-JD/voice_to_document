@@ -50,6 +50,7 @@ from app.summary import (
     SummaryAdapter,
     SummaryError,
     SummaryTimeoutError,
+    summary_settings_fingerprint,
 )
 from app.summary_renderer import render_summary_markdown
 
@@ -279,24 +280,40 @@ class FakePipelineHandler:
             source,
         )
         self._write_classified_transcript_artifacts(classified)
-        transition_recording(
-            self.settings.database_path,
-            job.recording_id,
-            RecordingStatus.READY_FOR_SUMMARY,
-        )
-        transition_recording(
-            self.settings.database_path,
-            job.recording_id,
-            RecordingStatus.COMPLETED,
-        )
+        if applied.category in self.settings.auto_summary_categories:
+            transition_and_enqueue(
+                self.settings.database_path,
+                job.recording_id,
+                RecordingStatus.SUMMARIZING,
+                "summarize",
+                transcript.revision,
+                summary_settings_fingerprint(self.summary_adapter, applied.category),
+            )
+        else:
+            transition_recording(
+                self.settings.database_path,
+                job.recording_id,
+                RecordingStatus.READY_FOR_SUMMARY,
+            )
+            transition_recording(
+                self.settings.database_path,
+                job.recording_id,
+                RecordingStatus.COMPLETED,
+            )
 
     def _summarize(self, job: Job) -> None:
         recording = self._recording(job.recording_id)
         category = str(recording["category"])
-        transcript = self._load_transcript(job.recording_id, int(recording["revision"]))
+        revision = int(recording["revision"])
+        if (
+            revision != job.input_revision
+            or job.settings_fingerprint
+            != summary_settings_fingerprint(self.summary_adapter, category)
+        ):
+            return
+        transcript = self._load_transcript(job.recording_id, revision)
         summary = self.summary_adapter.summarize(transcript, category)
         slug = safe_category_slug(category)
-        revision = int(recording["revision"])
         metadata = {
             "schema_version": 1,
             "recording_id": job.recording_id,
@@ -305,6 +322,7 @@ class FakePipelineHandler:
             "created_at": utc_now(),
             "category": category,
             "category_slug": slug,
+            "summary_fingerprint": self.summary_adapter.fingerprint,
             "summary": summary.model_dump(mode="json"),
         }
         base = Path(slug) / "요약"
@@ -421,7 +439,7 @@ class FakePipelineHandler:
                 job.recording_id,
                 "summarize",
                 revision,
-                "speaker-edit-summary-v1",
+                summary_settings_fingerprint(self.summary_adapter, str(recording["category"])),
             )
 
     def _recording(self, recording_id: str) -> sqlite3.Row:
