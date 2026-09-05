@@ -2,6 +2,7 @@
   "components": {
     "schemas": {
       "ActionItem": {
+        "additionalProperties": false,
         "properties": {
           "assignee": {
             "anyOf": [
@@ -25,6 +26,14 @@
             ],
             "title": "Due Date"
           },
+          "evidence": {
+            "items": {
+              "$ref": "#/components/schemas/Evidence"
+            },
+            "minItems": 1,
+            "title": "Evidence",
+            "type": "array"
+          },
           "task": {
             "minLength": 1,
             "title": "Task",
@@ -32,7 +41,8 @@
           }
         },
         "required": [
-          "task"
+          "task",
+          "evidence"
         ],
         "title": "ActionItem",
         "type": "object"
@@ -256,6 +266,123 @@
         "title": "CategoryUpdateResponse",
         "type": "object"
       },
+      "DailyConversationSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "agreements": {
+            "items": {
+              "$ref": "#/components/schemas/SummaryFact"
+            },
+            "title": "Agreements",
+            "type": "array"
+          },
+          "main_topics": {
+            "items": {
+              "$ref": "#/components/schemas/SummaryFact"
+            },
+            "title": "Main Topics",
+            "type": "array"
+          },
+          "reminders": {
+            "items": {
+              "$ref": "#/components/schemas/SummaryFact"
+            },
+            "title": "Reminders",
+            "type": "array"
+          },
+          "template": {
+            "const": "daily_conversation",
+            "title": "Template",
+            "type": "string"
+          }
+        },
+        "required": [
+          "template",
+          "main_topics",
+          "agreements",
+          "reminders"
+        ],
+        "title": "DailyConversationSummary",
+        "type": "object"
+      },
+      "Evidence": {
+        "additionalProperties": false,
+        "properties": {
+          "end_ms": {
+            "exclusiveMinimum": 0.0,
+            "title": "End Ms",
+            "type": "integer"
+          },
+          "quote": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quote"
+          },
+          "segment_id": {
+            "format": "uuid",
+            "title": "Segment Id",
+            "type": "string"
+          },
+          "start_ms": {
+            "minimum": 0.0,
+            "title": "Start Ms",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "segment_id",
+          "start_ms",
+          "end_ms"
+        ],
+        "title": "Evidence",
+        "type": "object"
+      },
+      "GameListSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "follow_ups": {
+            "items": {
+              "$ref": "#/components/schemas/SummaryFact"
+            },
+            "title": "Follow Ups",
+            "type": "array"
+          },
+          "games": {
+            "items": {
+              "$ref": "#/components/schemas/SummaryFact"
+            },
+            "title": "Games",
+            "type": "array"
+          },
+          "preferences": {
+            "items": {
+              "$ref": "#/components/schemas/SummaryFact"
+            },
+            "title": "Preferences",
+            "type": "array"
+          },
+          "template": {
+            "const": "game_list",
+            "title": "Template",
+            "type": "string"
+          }
+        },
+        "required": [
+          "template",
+          "games",
+          "preferences",
+          "follow_ups"
+        ],
+        "title": "GameListSummary",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -341,7 +468,55 @@
         "title": "JobResponse",
         "type": "object"
       },
+      "LectureSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "concepts": {
+            "items": {
+              "$ref": "#/components/schemas/SummaryFact"
+            },
+            "title": "Concepts",
+            "type": "array"
+          },
+          "core_topics": {
+            "items": {
+              "$ref": "#/components/schemas/SummaryFact"
+            },
+            "title": "Core Topics",
+            "type": "array"
+          },
+          "examples": {
+            "items": {
+              "$ref": "#/components/schemas/SummaryFact"
+            },
+            "title": "Examples",
+            "type": "array"
+          },
+          "review_items": {
+            "items": {
+              "$ref": "#/components/schemas/SummaryFact"
+            },
+            "title": "Review Items",
+            "type": "array"
+          },
+          "template": {
+            "const": "lecture",
+            "title": "Template",
+            "type": "string"
+          }
+        },
+        "required": [
+          "template",
+          "core_topics",
+          "concepts",
+          "examples",
+          "review_items"
+        ],
+        "title": "LectureSummary",
+        "type": "object"
+      },
       "MeetingSummary": {
+        "additionalProperties": false,
         "properties": {
           "action_items": {
             "items": {
@@ -352,35 +527,36 @@
           },
           "decisions": {
             "items": {
-              "minLength": 1,
-              "type": "string"
+              "$ref": "#/components/schemas/SummaryFact"
             },
             "title": "Decisions",
             "type": "array"
           },
           "discussion": {
             "items": {
-              "minLength": 1,
-              "type": "string"
+              "$ref": "#/components/schemas/SummaryFact"
             },
             "title": "Discussion",
             "type": "array"
           },
           "open_questions": {
             "items": {
-              "minLength": 1,
-              "type": "string"
+              "$ref": "#/components/schemas/SummaryFact"
             },
             "title": "Open Questions",
             "type": "array"
           },
           "purpose": {
-            "minLength": 1,
-            "title": "Purpose",
+            "$ref": "#/components/schemas/SummaryFact"
+          },
+          "template": {
+            "const": "meeting",
+            "title": "Template",
             "type": "string"
           }
         },
         "required": [
+          "template",
           "purpose",
           "discussion",
           "decisions",
@@ -388,6 +564,41 @@
           "open_questions"
         ],
         "title": "MeetingSummary",
+        "type": "object"
+      },
+      "OtherSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "follow_ups": {
+            "items": {
+              "$ref": "#/components/schemas/SummaryFact"
+            },
+            "title": "Follow Ups",
+            "type": "array"
+          },
+          "key_facts": {
+            "items": {
+              "$ref": "#/components/schemas/SummaryFact"
+            },
+            "title": "Key Facts",
+            "type": "array"
+          },
+          "key_summary": {
+            "$ref": "#/components/schemas/SummaryFact"
+          },
+          "template": {
+            "const": "other",
+            "title": "Template",
+            "type": "string"
+          }
+        },
+        "required": [
+          "template",
+          "key_summary",
+          "key_facts",
+          "follow_ups"
+        ],
+        "title": "OtherSummary",
         "type": "object"
       },
       "PersonCreateRequest": {
@@ -560,12 +771,73 @@
           "summary": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/MeetingSummary"
+                "discriminator": {
+                  "mapping": {
+                    "daily_conversation": "#/components/schemas/DailyConversationSummary",
+                    "game_list": "#/components/schemas/GameListSummary",
+                    "lecture": "#/components/schemas/LectureSummary",
+                    "meeting": "#/components/schemas/MeetingSummary",
+                    "other": "#/components/schemas/OtherSummary"
+                  },
+                  "propertyName": "template"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/LectureSummary"
+                  },
+                  {
+                    "$ref": "#/components/schemas/MeetingSummary"
+                  },
+                  {
+                    "$ref": "#/components/schemas/DailyConversationSummary"
+                  },
+                  {
+                    "$ref": "#/components/schemas/GameListSummary"
+                  },
+                  {
+                    "$ref": "#/components/schemas/OtherSummary"
+                  }
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Summary"
+          },
+          "summary_can_request": {
+            "title": "Summary Can Request",
+            "type": "boolean"
+          },
+          "summary_job": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/JobResponse"
               },
               {
                 "type": "null"
               }
             ]
+          },
+          "summary_policy": {
+            "enum": [
+              "automatic",
+              "manual"
+            ],
+            "title": "Summary Policy",
+            "type": "string"
+          },
+          "summary_status": {
+            "enum": [
+              "not_requested",
+              "queued",
+              "running",
+              "succeeded",
+              "stale",
+              "failed"
+            ],
+            "title": "Summary Status",
+            "type": "string"
           }
         },
         "required": [
@@ -575,6 +847,10 @@
           "artifacts",
           "jobs",
           "summary",
+          "summary_status",
+          "summary_policy",
+          "summary_job",
+          "summary_can_request",
           "allowed_categories"
         ],
         "title": "RecordingDetailResponse",
@@ -1440,6 +1716,82 @@
         "title": "SpeakerMatchResponse",
         "type": "object"
       },
+      "SummaryFact": {
+        "additionalProperties": false,
+        "properties": {
+          "evidence": {
+            "items": {
+              "$ref": "#/components/schemas/Evidence"
+            },
+            "minItems": 1,
+            "title": "Evidence",
+            "type": "array"
+          },
+          "text": {
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text",
+          "evidence"
+        ],
+        "title": "SummaryFact",
+        "type": "object"
+      },
+      "SummaryRequest": {
+        "properties": {
+          "expected_revision": {
+            "minimum": 1.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "expected_revision"
+        ],
+        "title": "SummaryRequest",
+        "type": "object"
+      },
+      "SummaryRequestResponse": {
+        "properties": {
+          "created": {
+            "title": "Created",
+            "type": "boolean"
+          },
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          },
+          "job_status": {
+            "enum": [
+              "queued",
+              "running",
+              "succeeded"
+            ],
+            "title": "Job Status",
+            "type": "string"
+          },
+          "recording_id": {
+            "title": "Recording Id",
+            "type": "string"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "recording_id",
+          "revision",
+          "created",
+          "job_id",
+          "job_status"
+        ],
+        "title": "SummaryRequestResponse",
+        "type": "object"
+      },
       "ValidationError": {
         "properties": {
           "ctx": {
@@ -2085,6 +2437,78 @@
         "summary": "Assign Recording Speaker",
         "tags": [
           "speaker-review"
+        ]
+      }
+    },
+    "/api/recordings/{recording_id}/summary": {
+      "post": {
+        "operationId": "request_summary_api_recordings__recording_id__summary_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "recording_id",
+            "required": true,
+            "schema": {
+              "title": "Recording Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SummaryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SummaryRequestResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          }
+        },
+        "summary": "Request Summary",
+        "tags": [
+          "recordings"
         ]
       }
     },

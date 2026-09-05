@@ -4,14 +4,15 @@ import json
 import sqlite3
 import uuid
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, cast
 
-from fastapi import APIRouter, Query
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, Query, Response
+from pydantic import BaseModel, Field, TypeAdapter
 
 from app.config import Settings
 from app.db import connect, migrate_database, utc_now
-from app.schema import MeetingSummary, RecordingStatus
+from app.schema import CategorySummary, RecordingStatus
+from app.summary import configured_summary_settings_fingerprint
 
 PAGE_SIZE = 50
 
@@ -152,7 +153,11 @@ class RecordingDetailResponse(BaseModel):
     segments: list[SegmentResponse]
     artifacts: list[ArtifactResponse]
     jobs: list[JobResponse]
-    summary: MeetingSummary | None
+    summary: CategorySummary | None
+    summary_status: Literal["not_requested", "queued", "running", "succeeded", "stale", "failed"]
+    summary_policy: Literal["automatic", "manual"]
+    summary_job: JobResponse | None
+    summary_can_request: bool
     allowed_categories: list[str]
 
 
@@ -174,6 +179,18 @@ class CategoryUpdateResponse(BaseModel):
     category_source: Literal["manual"] = "manual"
     revision: int
     render_job: CategoryRenderJobResponse
+
+
+class SummaryRequest(BaseModel):
+    expected_revision: int = Field(ge=1)
+
+
+class SummaryRequestResponse(BaseModel):
+    recording_id: str
+    revision: int
+    created: bool
+    job_id: str
+    job_status: Literal["queued", "running", "succeeded"]
 
 
 def create_recordings_router(settings: Settings) -> APIRouter:
@@ -358,14 +375,181 @@ def create_recordings_router(settings: Settings) -> APIRouter:
             value = dict(row)
             value["match"] = matches.get(str(row["local_speaker_id"]))
             speaker_responses.append(RecordingSpeakerResponse.model_validate(value))
+        summary = _load_summary(settings.summary_root, artifacts, int(recording["revision"]))
+        summary_status, summary_policy, summary_job, summary_can_request = _summary_state(
+            settings, recording, jobs, artifacts, summary
+        )
         return RecordingDetailResponse(
             recording=_recording_item(dict(recording)),
             speakers=speaker_responses,
             segments=[_segment_response(dict(row)) for row in segments],
             artifacts=[ArtifactResponse.model_validate(dict(row)) for row in artifacts],
             jobs=[JobResponse.model_validate(dict(row)) for row in jobs],
-            summary=_load_summary(settings.summary_root, artifacts, int(recording["revision"])),
+            summary=summary,
+            summary_status=summary_status,
+            summary_policy=summary_policy,
+            summary_job=summary_job,
+            summary_can_request=summary_can_request,
             allowed_categories=list(settings.categories),
+        )
+
+    @router.post(
+        "/{recording_id}/summary",
+        response_model=SummaryRequestResponse,
+        status_code=202,
+        responses={
+            404: {"model": ApiErrorResponse},
+            409: {"model": ApiErrorResponse},
+            422: {"model": ApiErrorResponse},
+        },
+    )
+    def request_summary(
+        recording_id: str, request: SummaryRequest, response: Response
+    ) -> SummaryRequestResponse:
+        migrate_database(settings.database_path)
+        with connect(settings.database_path) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                recording = connection.execute(
+                    "SELECT status, category, revision FROM recordings WHERE id = ?",
+                    (recording_id,),
+                ).fetchone()
+                if recording is None:
+                    raise ApiProblem(404, "RECORDING_NOT_FOUND", "녹음을 찾을 수 없습니다.")
+                revision = int(recording["revision"])
+                if revision != request.expected_revision:
+                    raise ApiProblem(
+                        409,
+                        "REVISION_CONFLICT",
+                        "다른 변경이 먼저 반영되었습니다. 최신 내용을 다시 확인해 주세요.",
+                        {"current_revision": revision},
+                    )
+                category = recording["category"]
+                if category is None:
+                    raise ApiProblem(
+                        422,
+                        "SUMMARY_NOT_READY",
+                        "분류가 완료된 뒤 요약을 요청할 수 있습니다.",
+                    )
+                active_input = connection.execute(
+                    """
+                    SELECT id, kind FROM jobs
+                    WHERE recording_id = ? AND kind IN ('classify', 'render')
+                      AND status IN ('queued', 'running')
+                    ORDER BY created_at LIMIT 1
+                    """,
+                    (recording_id,),
+                ).fetchone()
+                if active_input is not None:
+                    code = (
+                        "CLASSIFICATION_IN_PROGRESS"
+                        if active_input["kind"] == "classify"
+                        else "RENDER_IN_PROGRESS"
+                    )
+                    raise ApiProblem(
+                        422,
+                        code,
+                        "입력 문서를 처리하는 중입니다. 완료 후 다시 요청해 주세요.",
+                        {"job_id": str(active_input["id"])},
+                    )
+                fingerprint = configured_summary_settings_fingerprint(settings, str(category))
+                existing = connection.execute(
+                    """
+                    SELECT id, status FROM jobs
+                    WHERE recording_id = ? AND kind = 'summarize' AND input_revision = ?
+                      AND settings_fingerprint = ?
+                      AND status IN ('queued', 'running', 'succeeded')
+                    ORDER BY created_at DESC LIMIT 1
+                    """,
+                    (recording_id, revision, fingerprint),
+                ).fetchone()
+                if existing is not None:
+                    connection.commit()
+                    response.status_code = 200
+                    return SummaryRequestResponse(
+                        recording_id=recording_id,
+                        revision=revision,
+                        created=False,
+                        job_id=str(existing["id"]),
+                        job_status=existing["status"],
+                    )
+                active_summary = connection.execute(
+                    """
+                    SELECT id FROM jobs WHERE recording_id = ? AND kind = 'summarize'
+                      AND status IN ('queued', 'running') LIMIT 1
+                    """,
+                    (recording_id,),
+                ).fetchone()
+                if active_summary is not None:
+                    raise ApiProblem(
+                        422,
+                        "SUMMARY_IN_PROGRESS",
+                        "다른 입력의 요약을 처리하는 중입니다.",
+                        {"job_id": str(active_summary["id"])},
+                    )
+                status = RecordingStatus(str(recording["status"]))
+                if status not in {
+                    RecordingStatus.READY_FOR_SUMMARY,
+                    RecordingStatus.COMPLETED,
+                    RecordingStatus.FAILED,
+                }:
+                    raise ApiProblem(
+                        422,
+                        "SUMMARY_NOT_READY",
+                        "현재 처리 단계에서는 요약을 요청할 수 없습니다.",
+                    )
+                job_id = str(uuid.uuid4())
+                timestamp = utc_now()
+                connection.execute(
+                    """
+                    INSERT INTO jobs(
+                        id, recording_id, kind, status, attempts, available_at,
+                        created_at, updated_at, input_revision, settings_fingerprint
+                    ) VALUES (?, ?, 'summarize', 'queued', 0, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        job_id,
+                        recording_id,
+                        timestamp,
+                        timestamp,
+                        timestamp,
+                        revision,
+                        fingerprint,
+                    ),
+                )
+                connection.execute(
+                    """
+                    UPDATE recordings SET status = 'SUMMARIZING', last_error_code = NULL,
+                        last_error_message = NULL, updated_at = ? WHERE id = ?
+                    """,
+                    (timestamp, recording_id),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO audit_events(id, recording_id, event_type, details_json, created_at)
+                    VALUES (?, ?, 'summary_requested', ?, ?)
+                    """,
+                    (
+                        str(uuid.uuid4()),
+                        recording_id,
+                        json.dumps(
+                            {"revision": revision, "category": category},
+                            ensure_ascii=False,
+                            sort_keys=True,
+                        ),
+                        timestamp,
+                    ),
+                )
+                connection.commit()
+            except (ApiProblem, sqlite3.Error):
+                connection.rollback()
+                raise
+        return SummaryRequestResponse(
+            recording_id=recording_id,
+            revision=revision,
+            created=True,
+            job_id=job_id,
+            job_status="queued",
         )
 
     @router.patch(
@@ -507,16 +691,17 @@ def _segment_response(row: dict[str, Any]) -> SegmentResponse:
         raise ApiProblem(500, "INVALID_SEGMENT", "발화 구간을 읽을 수 없습니다.") from error
 
 
-def _load_summary(root: Path, artifacts: list[Any], current_revision: int) -> MeetingSummary | None:
-    row = next(
-        (
-            artifact
-            for artifact in artifacts
-            if artifact["kind"] == "summary_json" and int(artifact["revision"]) == current_revision
-        ),
-        None,
-    )
-    if row is None:
+def _load_summary(
+    root: Path, artifacts: list[Any], current_revision: int
+) -> CategorySummary | None:
+    current = {
+        str(artifact["kind"]): artifact
+        for artifact in artifacts
+        if int(artifact["revision"]) == current_revision
+        and artifact["kind"] in {"summary_json", "summary_markdown"}
+    }
+    row = current.get("summary_json")
+    if row is None or "summary_markdown" not in current:
         return None
     root = root.resolve()
     path = (root / str(row["relative_path"])).resolve()
@@ -524,6 +709,65 @@ def _load_summary(root: Path, artifacts: list[Any], current_revision: int) -> Me
         raise ApiProblem(500, "INVALID_ARTIFACT_PATH", "결과 파일 경로가 유효하지 않습니다.")
     try:
         value = json.loads(path.read_text(encoding="utf-8"))["summary"]
-        return MeetingSummary.model_validate(value)
+        return TypeAdapter(CategorySummary).validate_python(value)
     except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
         raise ApiProblem(500, "INVALID_ARTIFACT", "요약 결과를 읽을 수 없습니다.") from error
+
+
+def _summary_state(
+    settings: Settings,
+    recording: Any,
+    jobs: list[Any],
+    artifacts: list[Any],
+    summary: CategorySummary | None,
+) -> tuple[
+    Literal["not_requested", "queued", "running", "succeeded", "stale", "failed"],
+    Literal["automatic", "manual"],
+    JobResponse | None,
+    bool,
+]:
+    revision = int(recording["revision"])
+    category = None if recording["category"] is None else str(recording["category"])
+    policy: Literal["automatic", "manual"] = (
+        "automatic" if category in settings.auto_summary_categories else "manual"
+    )
+    current_row = next(
+        (
+            row
+            for row in jobs
+            if row["kind"] == "summarize" and int(row["input_revision"]) == revision
+        ),
+        None,
+    )
+    current_job = JobResponse.model_validate(dict(current_row)) if current_row is not None else None
+    status: Literal["not_requested", "queued", "running", "succeeded", "stale", "failed"]
+    if summary is not None:
+        status = "succeeded"
+    elif current_job is not None and current_job.status in {"queued", "running", "failed"}:
+        status = cast(Literal["queued", "running", "failed"], current_job.status)
+    elif any(
+        artifact["kind"] == "summary_json" and int(artifact["revision"]) < revision
+        for artifact in artifacts
+    ):
+        status = "stale"
+    elif current_job is not None and current_job.status == "succeeded":
+        status = "failed"
+    else:
+        status = "not_requested"
+    active_input = any(
+        row["kind"] in {"classify", "render"} and row["status"] in {"queued", "running"}
+        for row in jobs
+    )
+    requestable_recording = RecordingStatus(str(recording["status"])) in {
+        RecordingStatus.READY_FOR_SUMMARY,
+        RecordingStatus.COMPLETED,
+        RecordingStatus.FAILED,
+    }
+    can_request = (
+        category is not None
+        and requestable_recording
+        and not active_input
+        and status not in {"queued", "running", "succeeded"}
+        and not (policy == "automatic" and status == "not_requested")
+    )
+    return status, policy, current_job, can_request

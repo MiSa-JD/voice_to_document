@@ -2,10 +2,17 @@ from __future__ import annotations
 
 import re
 from enum import StrEnum
-from typing import Annotated, Literal
+from typing import Annotated, Literal, cast
 from uuid import UUID
 
-from pydantic import BaseModel, Field, StringConstraints, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    field_validator,
+    model_validator,
+)
 
 SCHEMA_VERSION: Literal[2] = 2
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
@@ -116,15 +123,132 @@ class Transcript(BaseModel):
         return self
 
 
-class ActionItem(BaseModel):
+class StrictModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class Evidence(StrictModel):
+    segment_id: UUID
+    start_ms: int = Field(ge=0)
+    end_ms: int = Field(gt=0)
+    quote: NonEmptyText | None = None
+
+    @model_validator(mode="after")
+    def validate_time_range(self) -> Evidence:
+        if self.end_ms <= self.start_ms:
+            raise ValueError("evidence end_ms must be greater than start_ms")
+        return self
+
+
+class SummaryFact(StrictModel):
+    text: NonEmptyText
+    evidence: list[Evidence] = Field(min_length=1)
+
+
+class ActionItem(StrictModel):
     assignee: str | None = None
     due_date: str | None = None
     task: NonEmptyText
+    evidence: list[Evidence] = Field(min_length=1)
+
+    @field_validator("assignee", "due_date")
+    @classmethod
+    def reject_empty_optional_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("optional text must be null or non-empty")
+        return normalized
 
 
-class MeetingSummary(BaseModel):
-    purpose: NonEmptyText
-    discussion: list[NonEmptyText]
-    decisions: list[NonEmptyText]
+class LectureSummary(StrictModel):
+    template: Literal["lecture"]
+    core_topics: list[SummaryFact]
+    concepts: list[SummaryFact]
+    examples: list[SummaryFact]
+    review_items: list[SummaryFact]
+
+
+class MeetingSummary(StrictModel):
+    template: Literal["meeting"]
+    purpose: SummaryFact
+    discussion: list[SummaryFact]
+    decisions: list[SummaryFact]
     action_items: list[ActionItem]
-    open_questions: list[NonEmptyText]
+    open_questions: list[SummaryFact]
+
+
+class DailyConversationSummary(StrictModel):
+    template: Literal["daily_conversation"]
+    main_topics: list[SummaryFact]
+    agreements: list[SummaryFact]
+    reminders: list[SummaryFact]
+
+
+class GameListSummary(StrictModel):
+    template: Literal["game_list"]
+    games: list[SummaryFact]
+    preferences: list[SummaryFact]
+    follow_ups: list[SummaryFact]
+
+
+class OtherSummary(StrictModel):
+    template: Literal["other"]
+    key_summary: SummaryFact
+    key_facts: list[SummaryFact]
+    follow_ups: list[SummaryFact]
+
+
+CategorySummary = Annotated[
+    LectureSummary | MeetingSummary | DailyConversationSummary | GameListSummary | OtherSummary,
+    Field(discriminator="template"),
+]
+
+
+def summary_template_for_category(category: str) -> str:
+    return {
+        "강의": "lecture",
+        "회의": "meeting",
+        "일상 대화": "daily_conversation",
+        "게임 목록": "game_list",
+        "기타": "other",
+    }.get(category, "other")
+
+
+def summary_model_for_category(category: str) -> type[StrictModel]:
+    template = summary_template_for_category(category)
+    return cast(
+        type[StrictModel],
+        {
+            "lecture": LectureSummary,
+            "meeting": MeetingSummary,
+            "daily_conversation": DailyConversationSummary,
+            "game_list": GameListSummary,
+            "other": OtherSummary,
+        }[template],
+    )
+
+
+def validate_summary_evidence(summary: CategorySummary, transcript: Transcript) -> None:
+    segments = {segment.id: segment for segment in transcript.segments}
+    for evidence in _summary_evidence(summary):
+        segment = segments.get(evidence.segment_id)
+        if segment is None:
+            raise ValueError(f"summary evidence references unknown segment: {evidence.segment_id}")
+        if (evidence.start_ms, evidence.end_ms) != (segment.start_ms, segment.end_ms):
+            raise ValueError("summary evidence timestamps do not match transcript")
+        if evidence.quote is not None and evidence.quote not in segment.text:
+            raise ValueError("summary evidence quote is not present in transcript")
+
+
+def _summary_evidence(summary: CategorySummary) -> list[Evidence]:
+    evidence: list[Evidence] = []
+    for name, value in summary:
+        if name == "template":
+            continue
+        values = value if isinstance(value, list) else [value]
+        for item in values:
+            if isinstance(item, (SummaryFact, ActionItem)):
+                evidence.extend(item.evidence)
+    return evidence

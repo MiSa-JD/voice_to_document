@@ -22,6 +22,62 @@ function renderDetail() {
   );
 }
 
+const summaryState = {
+  summary_status: 'not_requested',
+  summary_policy: 'manual',
+  summary_job: null,
+  summary_can_request: false,
+} as const;
+
+function summaryDetail(
+  status:
+    'not_requested' | 'queued' | 'running' | 'succeeded' | 'stale' | 'failed',
+  overrides: object = {},
+) {
+  return {
+    recording: {
+      id: 'recording-id',
+      original_name: 'summary.m4a',
+      duration_ms: 2000,
+      status: status === 'failed' ? 'FAILED' : 'COMPLETED',
+      category: '일상 대화',
+      automatic_category: '일상 대화',
+      category_source: 'auto',
+      category_confidence: 0.8,
+      category_reason: '대화',
+      needs_speaker_review: false,
+      revision: 2,
+      created_at: 'now',
+      updated_at: 'now',
+    },
+    allowed_categories: ['일상 대화', '회의'],
+    speakers: [],
+    segments: [],
+    artifacts: [],
+    jobs: [],
+    summary: null,
+    summary_status: status,
+    summary_policy: 'manual',
+    summary_job:
+      status === 'failed'
+        ? {
+            id: 'summary-job',
+            kind: 'summarize',
+            status: 'failed',
+            attempts: 3,
+            input_revision: 2,
+            settings_fingerprint: 'summary-v1',
+            error_code: 'SUMMARY_INVALID_OUTPUT',
+            error_message: '근거를 확인할 수 없습니다.',
+            created_at: 'now',
+            updated_at: 'now',
+          }
+        : null,
+    summary_can_request: ['not_requested', 'stale', 'failed'].includes(status),
+    ...overrides,
+  };
+}
+
 test('transcript, category, summary, job 이력을 표시한다', async () => {
   vi.stubGlobal(
     'fetch',
@@ -99,14 +155,37 @@ test('transcript, category, summary, job 이력을 표시한다', async () => {
                 },
               ],
               summary: {
-                purpose: '초안 준비 계획 확인',
-                discussion: ['회의 목표를 확인함'],
-                decisions: ['초안을 준비함'],
+                template: 'meeting',
+                purpose: {
+                  text: '초안 준비 계획 확인',
+                  evidence: [
+                    {
+                      segment_id: 'segment-id',
+                      start_ms: 0,
+                      end_ms: 900,
+                    },
+                  ],
+                },
+                discussion: [],
+                decisions: [],
                 action_items: [
-                  { assignee: null, due_date: null, task: '초안 준비' },
+                  {
+                    assignee: null,
+                    due_date: null,
+                    task: '초안 준비',
+                    evidence: [
+                      {
+                        segment_id: 'segment-id',
+                        start_ms: 0,
+                        end_ms: 900,
+                      },
+                    ],
+                  },
                 ],
                 open_questions: [],
               },
+              ...summaryState,
+              summary_status: 'succeeded',
             }),
       ),
     ),
@@ -192,6 +271,7 @@ test('실패 코드와 사용자 조치, 자동 재시도 상태를 표시한다
                 },
               ],
               summary: null,
+              ...summaryState,
             }),
       ),
     ),
@@ -228,6 +308,7 @@ test('확인 전에는 변경하지 않고 제출 후 재전사 비교와 재검
     artifacts: [],
     jobs: [],
     summary: null,
+    ...summaryState,
   };
   const latest = {
     request_id: 'request-id',
@@ -383,6 +464,7 @@ test('자동 분류 근거를 표시하고 허용 범주를 수동 저장한다'
           artifacts: [],
           jobs: [],
           summary: null,
+          ...summaryState,
         }),
       );
     });
@@ -461,6 +543,7 @@ test('범주 revision 충돌 시 덮어쓰지 않고 최신 내용을 다시 불
           artifacts: [],
           jobs: [],
           summary: null,
+          ...summaryState,
         }),
       );
     });
@@ -542,6 +625,7 @@ test.each([
             artifacts: [],
             jobs: [],
             summary: null,
+            ...summaryState,
           }),
         );
       }),
@@ -555,3 +639,109 @@ test.each([
     expect(await screen.findByText(expected)).toBeInTheDocument();
   },
 );
+
+test.each([
+  ['not_requested', '필요할 때 요약을 요청할 수 있습니다.'],
+  ['queued', '요약 생성 순서를 기다리고 있습니다.'],
+  ['running', '요약을 생성하고 있습니다.'],
+  ['succeeded', '최신 transcript의 요약입니다.'],
+  ['stale', '수정 전 요약이 있으며 최신 내용에는 표시하지 않습니다.'],
+  ['failed', '요약 생성에 실패했습니다. 근거를 확인할 수 없습니다.'],
+] as const)('요약 %s 상태를 구분해 안내한다', async (status, label) => {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn().mockImplementation((path: string) =>
+      Promise.resolve(
+        path.endsWith('/retranscriptions/latest')
+          ? response(404, {
+              error: { code: 'RETRANSCRIPTION_NOT_FOUND', message: '없음' },
+            })
+          : response(200, summaryDetail(status)),
+      ),
+    ),
+  );
+
+  renderDetail();
+
+  expect(await screen.findByText(label)).toBeInTheDocument();
+});
+
+test('수동 요약 중복 클릭은 한 번만 등록하고 활성 요청 중 버튼을 막는다', async () => {
+  const fetchMock = vi
+    .fn()
+    .mockImplementation((path: string, init?: RequestInit) => {
+      if (path.endsWith('/retranscriptions/latest')) {
+        return Promise.resolve(
+          response(404, {
+            error: { code: 'RETRANSCRIPTION_NOT_FOUND', message: '없음' },
+          }),
+        );
+      }
+      if (init?.method === 'POST') {
+        return Promise.resolve(
+          response(202, {
+            recording_id: 'recording-id',
+            revision: 2,
+            created: true,
+            job_id: 'summary-job',
+            job_status: 'queued',
+          }),
+        );
+      }
+      return Promise.resolve(response(200, summaryDetail('not_requested')));
+    });
+  vi.stubGlobal('fetch', fetchMock);
+  renderDetail();
+
+  await userEvent.dblClick(
+    await screen.findByRole('button', { name: '요약 요청' }),
+  );
+
+  await waitFor(() =>
+    expect(
+      fetchMock.mock.calls.filter(([, init]) => init?.method === 'POST'),
+    ).toHaveLength(1),
+  );
+  expect(await screen.findByText('요약을 요청했습니다.')).toBeInTheDocument();
+});
+
+test('요약 revision 충돌은 최신 상세를 다시 불러오도록 안내한다', async () => {
+  let detailCalls = 0;
+  const fetchMock = vi
+    .fn()
+    .mockImplementation((path: string, init?: RequestInit) => {
+      if (path.endsWith('/retranscriptions/latest')) {
+        return Promise.resolve(
+          response(404, {
+            error: { code: 'RETRANSCRIPTION_NOT_FOUND', message: '없음' },
+          }),
+        );
+      }
+      if (init?.method === 'POST') {
+        return Promise.resolve(
+          response(409, {
+            error: {
+              code: 'REVISION_CONFLICT',
+              message: '최신 내용을 확인하세요.',
+              details: { current_revision: 3 },
+            },
+          }),
+        );
+      }
+      detailCalls += 1;
+      return Promise.resolve(response(200, summaryDetail('not_requested')));
+    });
+  vi.stubGlobal('fetch', fetchMock);
+  renderDetail();
+
+  await userEvent.click(
+    await screen.findByRole('button', { name: '요약 요청' }),
+  );
+
+  expect(
+    await screen.findByText(
+      '다른 변경이 먼저 반영되어 최신 내용을 다시 불러옵니다.',
+    ),
+  ).toBeInTheDocument();
+  await waitFor(() => expect(detailCalls).toBeGreaterThan(1));
+});

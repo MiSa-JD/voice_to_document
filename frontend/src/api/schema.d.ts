@@ -158,6 +158,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/recordings/{recording_id}/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Request Summary */
+        post: operations["request_summary_api_recordings__recording_id__summary_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/segments/speakers": {
         parameters: {
             query?: never;
@@ -236,6 +253,8 @@ export interface components {
             assignee?: string | null;
             /** Due Date */
             due_date?: string | null;
+            /** Evidence */
+            evidence: components["schemas"]["Evidence"][];
             /** Task */
             task: string;
         };
@@ -330,6 +349,48 @@ export interface components {
             /** Revision */
             revision: number;
         };
+        /** DailyConversationSummary */
+        DailyConversationSummary: {
+            /** Agreements */
+            agreements: components["schemas"]["SummaryFact"][];
+            /** Main Topics */
+            main_topics: components["schemas"]["SummaryFact"][];
+            /** Reminders */
+            reminders: components["schemas"]["SummaryFact"][];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            template: "daily_conversation";
+        };
+        /** Evidence */
+        Evidence: {
+            /** End Ms */
+            end_ms: number;
+            /** Quote */
+            quote?: string | null;
+            /**
+             * Segment Id
+             * Format: uuid
+             */
+            segment_id: string;
+            /** Start Ms */
+            start_ms: number;
+        };
+        /** GameListSummary */
+        GameListSummary: {
+            /** Follow Ups */
+            follow_ups: components["schemas"]["SummaryFact"][];
+            /** Games */
+            games: components["schemas"]["SummaryFact"][];
+            /** Preferences */
+            preferences: components["schemas"]["SummaryFact"][];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            template: "game_list";
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -358,18 +419,51 @@ export interface components {
             /** Updated At */
             updated_at: string;
         };
+        /** LectureSummary */
+        LectureSummary: {
+            /** Concepts */
+            concepts: components["schemas"]["SummaryFact"][];
+            /** Core Topics */
+            core_topics: components["schemas"]["SummaryFact"][];
+            /** Examples */
+            examples: components["schemas"]["SummaryFact"][];
+            /** Review Items */
+            review_items: components["schemas"]["SummaryFact"][];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            template: "lecture";
+        };
         /** MeetingSummary */
         MeetingSummary: {
             /** Action Items */
             action_items: components["schemas"]["ActionItem"][];
             /** Decisions */
-            decisions: string[];
+            decisions: components["schemas"]["SummaryFact"][];
             /** Discussion */
-            discussion: string[];
+            discussion: components["schemas"]["SummaryFact"][];
             /** Open Questions */
-            open_questions: string[];
-            /** Purpose */
-            purpose: string;
+            open_questions: components["schemas"]["SummaryFact"][];
+            purpose: components["schemas"]["SummaryFact"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            template: "meeting";
+        };
+        /** OtherSummary */
+        OtherSummary: {
+            /** Follow Ups */
+            follow_ups: components["schemas"]["SummaryFact"][];
+            /** Key Facts */
+            key_facts: components["schemas"]["SummaryFact"][];
+            key_summary: components["schemas"]["SummaryFact"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            template: "other";
         };
         /** PersonCreateRequest */
         PersonCreateRequest: {
@@ -431,7 +525,21 @@ export interface components {
             segments: components["schemas"]["SegmentResponse"][];
             /** Speakers */
             speakers: components["schemas"]["RecordingSpeakerResponse"][];
-            summary: components["schemas"]["MeetingSummary"] | null;
+            /** Summary */
+            summary: (components["schemas"]["LectureSummary"] | components["schemas"]["MeetingSummary"] | components["schemas"]["DailyConversationSummary"] | components["schemas"]["GameListSummary"] | components["schemas"]["OtherSummary"]) | null;
+            /** Summary Can Request */
+            summary_can_request: boolean;
+            summary_job: components["schemas"]["JobResponse"] | null;
+            /**
+             * Summary Policy
+             * @enum {string}
+             */
+            summary_policy: "automatic" | "manual";
+            /**
+             * Summary Status
+             * @enum {string}
+             */
+            summary_status: "not_requested" | "queued" | "running" | "succeeded" | "stale" | "failed";
         };
         /** RecordingItem */
         RecordingItem: {
@@ -706,6 +814,34 @@ export interface components {
             margin: number;
             /** Second Best Score */
             second_best_score: number;
+        };
+        /** SummaryFact */
+        SummaryFact: {
+            /** Evidence */
+            evidence: components["schemas"]["Evidence"][];
+            /** Text */
+            text: string;
+        };
+        /** SummaryRequest */
+        SummaryRequest: {
+            /** Expected Revision */
+            expected_revision: number;
+        };
+        /** SummaryRequestResponse */
+        SummaryRequestResponse: {
+            /** Created */
+            created: boolean;
+            /** Job Id */
+            job_id: string;
+            /**
+             * Job Status
+             * @enum {string}
+             */
+            job_status: "queued" | "running" | "succeeded";
+            /** Recording Id */
+            recording_id: string;
+            /** Revision */
+            revision: number;
         };
         /** ValidationError */
         ValidationError: {
@@ -1125,6 +1261,59 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SpeakerAssignmentResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+        };
+    };
+    request_summary_api_recordings__recording_id__summary_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                recording_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SummaryRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SummaryRequestResponse"];
                 };
             };
             /** @description Not Found */

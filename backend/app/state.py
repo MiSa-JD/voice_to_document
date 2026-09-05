@@ -31,7 +31,7 @@ ALLOWED_TRANSITIONS: dict[RecordingStatus, frozenset[RecordingStatus]] = {
         {RecordingStatus.SUMMARIZING, RecordingStatus.COMPLETED, RecordingStatus.FAILED}
     ),
     RecordingStatus.SUMMARIZING: frozenset({RecordingStatus.COMPLETED, RecordingStatus.FAILED}),
-    RecordingStatus.COMPLETED: frozenset(),
+    RecordingStatus.COMPLETED: frozenset({RecordingStatus.SUMMARIZING}),
     RecordingStatus.FAILED: frozenset(
         {
             RecordingStatus.DISCOVERED,

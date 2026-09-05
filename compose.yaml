@@ -7,8 +7,9 @@ x-backend-environment: &backend-environment
   SCAN_INTERVAL_SECONDS: ${SCAN_INTERVAL_SECONDS:-10}
   FILE_STABLE_SECONDS: ${FILE_STABLE_SECONDS:-30}
   CATEGORIES: ${CATEGORIES:-강의,일상 대화,회의,게임 목록,기타}
-  AUTO_SUMMARY_CATEGORIES: ${AUTO_SUMMARY_CATEGORIES:-강의,회의}
+  AUTO_SUMMARY_CATEGORIES: ${AUTO_SUMMARY_CATEGORIES-강의,회의}
   CLASSIFICATION_CONTEXT_MAX_CHARS: ${CLASSIFICATION_CONTEXT_MAX_CHARS:-120000}
+  SUMMARY_CONTEXT_MAX_CHARS: ${SUMMARY_CONTEXT_MAX_CHARS:-120000}
   SPEECH_MODE: ${SPEECH_MODE:-${AI_MODE:-fake}}
   DOCUMENT_MODE: ${DOCUMENT_MODE:-${AI_MODE:-fake}}
   WHISPER_MODEL: ${WHISPER_MODEL:-large-v3}
@@ -37,6 +38,24 @@ x-backend-volumes: &backend-read-volumes
   - ${DATA_ROOT:-./runtime}/app:${APP_DATA_DIR:-/data/app}
 
 services:
+  summary-eval:
+    profiles: ["summary-eval"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    command: ["python", "-m", "app.summary_eval"]
+    environment:
+      <<: *backend-environment
+      SERVICE_NAME: test
+      DOCUMENT_MODE: real
+      LLM_PROVIDER: openai_compatible
+      LLM_BASE_URL: https://api.openai.com/v1
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_MODEL: gpt-5.4-nano-2026-03-17
+    user: "${APP_RUN_UID:-1000}:${APP_RUN_GID:-1000}"
+    volumes: *backend-read-volumes
+
   classification-eval:
     profiles: ["classification-eval"]
     build:

@@ -11,9 +11,10 @@ from app.jobs import Job
 from app.log import configure_logging
 from app.long_transcript import LongTranscriptClassifier
 from app.openai_classification import OpenAIClassificationAdapter
+from app.openai_summary import OpenAISummaryAdapter
 from app.pipeline import FakePipelineHandler
 from app.real_pipeline import RealSpeechPipelineHandler
-from app.reconciliation import reconcile_markdown_artifacts
+from app.reconciliation import reconcile_markdown_artifacts, reconcile_summary_artifacts
 from app.runtime import JobHandler, discover_once, process_one_job
 
 
@@ -42,6 +43,12 @@ def run(settings: Settings | None = None, handler: JobHandler | None = None) -> 
         config.document_root,
         logger,
     )
+    reconcile_summary_artifacts(
+        config.database_path,
+        config.transcript_root,
+        config.document_root,
+        logger,
+    )
     tracker = StabilityTracker(config.file_stable_seconds)
     job_handler = handler or build_handler(config, logger)
     logger.info("worker_started", extra={"stage": "readiness"})
@@ -57,6 +64,7 @@ def run(settings: Settings | None = None, handler: JobHandler | None = None) -> 
 
 def build_handler(config: Settings, logger: logging.Logger) -> JobHandler:
     classification_adapter = None
+    summary_adapter = None
     if config.effective_document_mode == "real":
         if config.llm_api_key is None or config.llm_base_url is None or config.llm_model is None:
             raise RuntimeError("real document settings were not validated")
@@ -71,11 +79,25 @@ def build_handler(config: Settings, logger: logging.Logger) -> JobHandler:
             backend,
             max_context_chars=config.classification_context_max_chars,
         )
+        summary_adapter = OpenAISummaryAdapter(
+            base_url=config.llm_base_url,
+            api_key=config.llm_api_key.get_secret_value(),
+            model=config.llm_model,
+            max_context_chars=config.summary_context_max_chars,
+        )
     if config.effective_speech_mode == "real":
         return RealSpeechPipelineHandler(
-            config, logger, classification_adapter=classification_adapter
+            config,
+            logger,
+            classification_adapter=classification_adapter,
+            summary_adapter=summary_adapter,
         )
-    return FakePipelineHandler(config, logger, classification_adapter=classification_adapter)
+    return FakePipelineHandler(
+        config,
+        logger,
+        classification_adapter=classification_adapter,
+        summary_adapter=summary_adapter,
+    )
 
 
 def _r2_handler(logger: logging.Logger) -> JobHandler:

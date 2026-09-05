@@ -5,7 +5,16 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from app.schema import Classification, MeetingSummary, Segment, Transcript
+from pydantic import TypeAdapter
+
+from app.schema import (
+    CategorySummary,
+    Classification,
+    Segment,
+    Transcript,
+    summary_template_for_category,
+    validate_summary_evidence,
+)
 
 
 class FakeFixtureNotFoundError(ValueError):
@@ -67,11 +76,26 @@ class FakeAdapters:
             raise ValueError("fake document fixture has no classification")
         return value
 
-    def summarize(self, content_sha256: str) -> MeetingSummary:
-        value = self._expected(content_sha256).get("summary")
-        if value is None:
-            raise ValueError("fake document fixture has no summary")
-        return MeetingSummary.model_validate(value)
+    @property
+    def fingerprint(self) -> dict[str, object]:
+        return {"provider": "fake", "model": "fixture-summary-v2"}
+
+    def summarize(self, transcript: Transcript, category: str) -> CategorySummary:
+        value = self._expected(transcript.content_sha256).get("summary")
+        template = summary_template_for_category(category)
+        if not isinstance(value, dict) or value.get("template") != template:
+            value = _fallback_summary(transcript, template)
+        summary: CategorySummary = TypeAdapter(CategorySummary).validate_python(value)
+        by_time = {(item.start_ms, item.end_ms): item.id for item in transcript.segments}
+        payload = summary.model_dump(mode="json")
+        for item in _evidence_values(payload):
+            segment_id = by_time.get((int(str(item["start_ms"])), int(str(item["end_ms"]))))
+            if segment_id is None:
+                raise ValueError("fake summary evidence does not match transcript")
+            item["segment_id"] = str(segment_id)
+        result: CategorySummary = TypeAdapter(CategorySummary).validate_python(payload)
+        validate_summary_evidence(result, transcript)
+        return result
 
     def _expected(self, content_sha256: str) -> dict[str, Any]:
         fixture = self.fixtures.get(content_sha256)
@@ -91,3 +115,66 @@ class FakeAdapters:
         if not isinstance(value, dict):
             raise ValueError(f"expected a JSON object in {path.name}")
         return value
+
+
+def _evidence_values(value: object) -> list[dict[str, object]]:
+    results: list[dict[str, object]] = []
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if key == "evidence" and isinstance(item, list):
+                results.extend(entry for entry in item if isinstance(entry, dict))
+            else:
+                results.extend(_evidence_values(item))
+    elif isinstance(value, list):
+        for item in value:
+            results.extend(_evidence_values(item))
+    return results
+
+
+def _fallback_summary(transcript: Transcript, template: str) -> dict[str, object]:
+    segment = transcript.segments[0]
+    evidence = [
+        {
+            "segment_id": str(segment.id),
+            "start_ms": segment.start_ms,
+            "end_ms": segment.end_ms,
+            "quote": segment.text,
+        }
+    ]
+    fact = {"text": segment.text, "evidence": evidence}
+    values: dict[str, dict[str, object]] = {
+        "lecture": {
+            "template": "lecture",
+            "core_topics": [fact],
+            "concepts": [],
+            "examples": [],
+            "review_items": [],
+        },
+        "meeting": {
+            "template": "meeting",
+            "purpose": fact,
+            "discussion": [],
+            "decisions": [],
+            "action_items": [],
+            "open_questions": [],
+        },
+        "daily_conversation": {
+            "template": "daily_conversation",
+            "main_topics": [fact],
+            "agreements": [],
+            "reminders": [],
+        },
+        "game_list": {
+            "template": "game_list",
+            "games": [fact],
+            "preferences": [],
+            "follow_ups": [],
+        },
+        "other": {
+            "template": "other",
+            "key_summary": fact,
+            "key_facts": [],
+            "follow_ups": [],
+        },
+    }
+    return values[template]

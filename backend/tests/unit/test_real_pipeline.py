@@ -216,7 +216,12 @@ class StubDiarizationAdapter:
 
 
 def _real_settings(settings_values: dict[str, Any]) -> Settings:
-    values = {**settings_values, "SPEECH_MODE": "real", "HF_TOKEN": "test-token"}
+    values = {
+        **settings_values,
+        "SPEECH_MODE": "real",
+        "HF_TOKEN": "test-token",
+        "AUTO_SUMMARY_CATEGORIES": "강의",
+    }
     return Settings(**values)
 
 

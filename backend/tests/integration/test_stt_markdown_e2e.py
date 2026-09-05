@@ -56,6 +56,8 @@ def test_file_detection_to_revision_matched_markdown_survives_restart(
     assert dict(recording) == {"status": "COMPLETED", "revision": 1}
     assert [row["kind"] for row in artifacts] == [
         "recording_audio",
+        "summary_json",
+        "summary_markdown",
         "transcript_json",
         "transcript_markdown",
     ]
@@ -76,7 +78,7 @@ def test_file_detection_to_revision_matched_markdown_survives_restart(
     assert f"Recording ID: `{recording_id}`" in markdown_before_restart.decode()
     assert "Revision: 1" in markdown_before_restart.decode()
     assert "SPEAKER_00" in markdown_before_restart.decode()
-    assert not any(path.is_dir() for path in settings.document_root.iterdir())
+    assert not list(settings.document_root.rglob("*.tmp"))
 
     restarted_handler = FakePipelineHandler(settings, logger)
     assert not process_one_job(settings.database_path, restarted_handler, logger)

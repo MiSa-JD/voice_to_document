@@ -41,6 +41,11 @@ class Settings(BaseSettings):
         gt=0,
         validation_alias="CLASSIFICATION_CONTEXT_MAX_CHARS",
     )
+    summary_context_max_chars: int = Field(
+        default=120_000,
+        gt=0,
+        validation_alias="SUMMARY_CONTEXT_MAX_CHARS",
+    )
 
     ai_mode: Literal["fake", "real"] | None = Field(
         default=None,
@@ -106,6 +111,8 @@ class Settings(BaseSettings):
 
     @property
     def auto_summary_categories(self) -> tuple[str, ...]:
+        if not self.auto_summary_categories_csv.strip():
+            return ()
         return parse_categories(
             self.auto_summary_categories_csv,
             setting_name="AUTO_SUMMARY_CATEGORIES",
@@ -289,6 +296,7 @@ class Settings(BaseSettings):
             "category_slugs": {item.display_name: item.slug for item in self.category_definitions},
             "auto_summary_categories": self.auto_summary_categories,
             "classification_context_max_chars": self.classification_context_max_chars,
+            "summary_context_max_chars": self.summary_context_max_chars,
             "log_level": self.log_level,
         }
 

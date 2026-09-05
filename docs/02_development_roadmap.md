@@ -894,12 +894,12 @@ transcript와 화자 재검토 상태로 전환되는 것을 보여준다.
 
 ### R8 종료 게이트 — M6
 
-- [ ] 자동 요약 범주는 분류 후 한 번 요약된다.
-- [ ] 비대상 범주는 사용자가 요청할 때만 요약된다.
-- [ ] 요약이 범주별 `요약/` 경로 규칙을 따른다.
-- [ ] 근거 없는 담당자·날짜·결정이 정상 필드로 확정되지 않는다.
-- [ ] 입력 revision이 바뀌면 이전 요약이 stale로 표시된다.
-- [ ] 브라우저에서 요청, 진행, 완료, 실패를 구분할 수 있다.
+- [x] 자동 요약 범주는 분류 후 한 번 요약된다.
+- [x] 비대상 범주는 사용자가 요청할 때만 요약된다.
+- [x] 요약이 범주별 `요약/` 경로 규칙을 따른다.
+- [x] 근거 없는 담당자·날짜·결정이 정상 필드로 확정되지 않는다.
+- [x] 입력 revision이 바뀌면 이전 요약이 stale로 표시된다.
+- [x] 브라우저에서 요청, 진행, 완료, 실패를 구분할 수 있다.
 
 ### 데모
 
@@ -1273,7 +1273,7 @@ transcript와 화자 재검토 상태로 전환되는 것을 보여준다.
 | R5 | `DONE` | [R5-11 STT 재수행 UI와 M3 검증](progress/062_r5_11_stt_rerun_ui.md) | - |
 | R6 | `BLOCKED` | [R6-01 embedding](progress/063_r6_01_embedding_versioning.md), [R6-02 profile](progress/064_r6_02_person_profiles.md), [R6-03 후보 규칙](progress/065_r6_03_speaker_auto_match.md), [R6-04 UI](progress/066_r6_04_speaker_match_ui.md), [GPU 접근 차단](progress/067_r6_03_gpu_verification.md) | `pyannote/embedding` 접근 승인, 동일·다른·애매한 화자의 비공개 평가 표본 |
 | R7 | `DONE` | [R7-01 범주](progress/042_r7_01_category_config.md), [R7-02 분류](progress/043_r7_02_classification_adapter.md), [R7-03 긴 transcript](progress/044_r7_03_long_transcript.md), [R7-04 renderer](progress/045_r7_04_transcript_renderer.md), [R7-05 범주 수정](progress/068_r7_05_category_edit.md), [OpenAI 실제 분류](progress/069_r7_06_openai_classifier.md), [실제 5개 범주 평가와 M5](progress/070_r7_06_classification_evaluation.md) | - |
-| R8 | `NOT STARTED` | - | - |
+| R8 | `DONE` | [R8-01 schema](progress/071_r8_01_summary_schema.md), [R8-02 실제 어댑터](progress/072_r8_02_summary_adapter.md), [R8-03 작업 등록](progress/073_r8_03_summary_jobs.md), [R8-04 artifact](progress/074_r8_04_summary_artifacts.md), [R8-05 UI](progress/075_r8_05_summary_ui.md), [R8-06 stale](progress/076_r8_06_summary_stale.md), [R8-07 실제 평가와 M6](progress/077_r8_07_summary_evaluation.md) | - |
 | R9 | `NOT STARTED` | - | R8 |
 | R10 | `NOT STARTED` | - | R9, 운영 장비 |
 

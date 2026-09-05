@@ -33,6 +33,8 @@ make test
 make compose-smoke
 make classification-eval
 make classification-e2e
+make summary-eval
+make summary-e2e
 make model-smoke
 make transcription-smoke
 make alignment-smoke
@@ -59,6 +61,16 @@ transcript 본문, API key, 공급자 원문 응답은 포함하지 않습니다
 분류를 연결하고, 브라우저에서 자동 범주 확인→수동 범주 수정→revision 2 JSON/Markdown/UI 일치를
 검증한 뒤 임시 데이터와 container를 정리합니다.
 
+`make summary-eval`은 공개 가능한 합성 한국어 transcript 5종을 실제 OpenAI Responses API로
+요약하고 범주 template, 필수 사실, 근거 segment, 미정 담당자·기한의 `null`, Markdown의
+`확인되지 않음`, model·prompt/schema/template fingerprint를 검사합니다. 출력에는 case ID, 범주,
+검사항목별 pass/fail, fingerprint, 합계만 포함하며 transcript와 공급자 원문 응답은 포함하지
+않습니다. `make summary-e2e`는 격리된 임시 Compose stack에서 fake speech와 실제 OpenAI
+분류·요약을 연결해 회의 자동 요약과 일상 대화 수동 요청, 실패 안내와 재시도, 화자 수정 후 stale
+재생성, worker 재시작 멱등성, API·JSON·Markdown·브라우저 일치를 검증합니다.
+모든 범주를 수동 요청 정책으로 운영하려면 `.env`에서 `AUTO_SUMMARY_CATEGORIES=`를 빈 값으로
+설정할 수 있습니다.
+
 `make alignment-smoke`는 같은 표준화·실제 전사 흐름 뒤에 감지 언어용 WhisperX alignment
 모델을 로드해 단어 시간을 보정합니다. 출력 JSON에는 전사·정렬 fingerprint, 언어, segment와
 word 개수, 단어 시간이 생성된 segment 수, 처리 시간, cache와 GPU 메모리만 포함합니다.
@@ -78,8 +90,9 @@ word 개수, 단어 시간이 생성된 segment 수, 처리 시간, cache와 GPU
 
 실제 `.env`, Hugging Face 토큰, LLM API 키, 실제 사람의 녹음은 Git에 커밋하지 않습니다.
 `DOCUMENT_MODE=fake`에서는 transcript가 외부 LLM으로 전송되지 않습니다.
-`DOCUMENT_MODE=real`에서는 분류를 위해 transcript가 설정한 OpenAI Responses API로 전송되며
-네트워크 연결과 API 사용 비용이 발생합니다. 키는 worker에만 전달하고 로그나 artifact에 남기지
+`DOCUMENT_MODE=real`에서는 분류와 요약을 위해 transcript가 설정한 OpenAI Responses API로
+전송되며 네트워크 연결과 API 사용 비용이 발생합니다. 요청은 저장 비활성화(`store=false`)로
+보내지만 외부 처리 자체는 발생합니다. 키는 worker에만 전달하고 로그나 artifact에 남기지
 않습니다. 전송할 녹음에 대한 권한과 개인정보 처리 조건을 확인한 뒤 활성화해야 합니다.
 
 자세한 환경 변수와 Compose 실행 방법은 R1 구현과 함께 이 문서에 추가합니다.

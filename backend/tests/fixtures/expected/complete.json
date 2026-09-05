@@ -22,14 +22,24 @@
     "reason": "안건과 후속 작업을 논의하는 두 화자의 대화"
   },
   "summary": {
-    "purpose": "초안 준비 계획 확인",
-    "discussion": ["회의 목표를 확인함", "다음 주까지 초안을 준비하기로 함"],
-    "decisions": ["다음 주까지 초안을 준비함"],
+    "template": "meeting",
+    "purpose": {
+      "text": "초안 준비 계획 확인",
+      "evidence": [{"segment_id": "00000000-0000-0000-0000-000000000001", "start_ms": 0, "end_ms": 900}]
+    },
+    "discussion": [
+      {"text": "회의 목표를 확인함", "evidence": [{"segment_id": "00000000-0000-0000-0000-000000000001", "start_ms": 0, "end_ms": 900}]},
+      {"text": "다음 주까지 초안을 준비하기로 함", "evidence": [{"segment_id": "00000000-0000-0000-0000-000000000002", "start_ms": 1000, "end_ms": 1900}]}
+    ],
+    "decisions": [
+      {"text": "다음 주까지 초안을 준비함", "evidence": [{"segment_id": "00000000-0000-0000-0000-000000000002", "start_ms": 1000, "end_ms": 1900}]}
+    ],
     "action_items": [
       {
         "assignee": null,
         "due_date": null,
-        "task": "초안 준비"
+        "task": "초안 준비",
+        "evidence": [{"segment_id": "00000000-0000-0000-0000-000000000002", "start_ms": 1000, "end_ms": 1900}]
       }
     ],
     "open_questions": []

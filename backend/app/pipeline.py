@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Literal, cast
 
 from app.adapters import FakeAdapters, FakeFixtureNotFoundError
-from app.artifacts import safe_category_slug, write_artifact
+from app.artifacts import safe_category_slug, write_artifact, write_summary_artifacts
 from app.classification import (
     ClassificationAdapter,
     ClassificationError,
@@ -36,7 +36,7 @@ from app.renderer import (
 )
 from app.retranscriptions import commit_retranscription, request_for_job
 from app.runtime import PermanentJobError, RetryableJobError
-from app.schema import Classification, MeetingSummary, RecordingStatus, Segment, Transcript
+from app.schema import Classification, RecordingStatus, Segment, Transcript
 from app.speaker_clips import generate_speaker_clips
 from app.speaker_embeddings import (
     FakeSpeakerEmbeddingAdapter,
@@ -45,6 +45,14 @@ from app.speaker_embeddings import (
     finalize_speaker_embeddings,
 )
 from app.state import enqueue_job, transition_and_enqueue, transition_recording
+from app.summary import (
+    RetryableSummaryError,
+    SummaryAdapter,
+    SummaryError,
+    SummaryTimeoutError,
+    summary_settings_fingerprint,
+)
+from app.summary_renderer import render_summary_markdown
 
 
 class TranscriptRendererError(RuntimeError):
@@ -87,6 +95,7 @@ class FakePipelineHandler:
         logger: logging.Logger,
         adapters: FakeAdapters | None = None,
         classification_adapter: ClassificationAdapter | None = None,
+        summary_adapter: SummaryAdapter | None = None,
         speaker_embedding_adapter: SpeakerEmbeddingAdapter | None = None,
         markdown_renderer: Callable[[Transcript], bytes] = render_transcript_markdown,
     ) -> None:
@@ -103,6 +112,7 @@ class FakePipelineHandler:
                 max_context_chars=settings.classification_context_max_chars,
             )
         self.classification_adapter = classification_adapter
+        self.summary_adapter = summary_adapter or self.adapters
         self.speaker_embedding_adapter = speaker_embedding_adapter or FakeSpeakerEmbeddingAdapter()
         self.markdown_renderer = markdown_renderer
 
@@ -188,6 +198,17 @@ class FakePipelineHandler:
         except ClassificationError as error:
             self._mark_failed(job.recording_id, error.code, "분류 결과가 유효하지 않습니다.")
             raise PermanentJobError(error.code, "classification result is invalid") from error
+        except SummaryTimeoutError as error:
+            self._mark_failed(job.recording_id, error.code, "요약 응답 시간이 초과되었습니다.")
+            raise RetryableJobError(error.code, "summary timed out") from error
+        except RetryableSummaryError as error:
+            self._mark_failed(
+                job.recording_id, error.code, "요약 공급자에 일시적으로 연결할 수 없습니다."
+            )
+            raise RetryableJobError(error.code, "summary provider unavailable") from error
+        except SummaryError as error:
+            self._mark_failed(job.recording_id, error.code, "요약 결과가 유효하지 않습니다.")
+            raise PermanentJobError(error.code, "summary result is invalid") from error
         except TranscriptRendererError as error:
             self._mark_failed(
                 job.recording_id,
@@ -259,23 +280,52 @@ class FakePipelineHandler:
             source,
         )
         self._write_classified_transcript_artifacts(classified)
-        transition_recording(
-            self.settings.database_path,
-            job.recording_id,
-            RecordingStatus.READY_FOR_SUMMARY,
-        )
-        transition_recording(
-            self.settings.database_path,
-            job.recording_id,
-            RecordingStatus.COMPLETED,
-        )
+        with connect(self.settings.database_path) as connection:
+            had_summary = (
+                connection.execute(
+                    """
+                    SELECT 1 FROM artifacts
+                    WHERE recording_id = ? AND kind = 'summary_json' AND revision < ?
+                    LIMIT 1
+                    """,
+                    (job.recording_id, transcript.revision),
+                ).fetchone()
+                is not None
+            )
+        if had_summary or applied.category in self.settings.auto_summary_categories:
+            transition_and_enqueue(
+                self.settings.database_path,
+                job.recording_id,
+                RecordingStatus.SUMMARIZING,
+                "summarize",
+                transcript.revision,
+                summary_settings_fingerprint(self.summary_adapter, applied.category),
+            )
+        else:
+            transition_recording(
+                self.settings.database_path,
+                job.recording_id,
+                RecordingStatus.READY_FOR_SUMMARY,
+            )
+            transition_recording(
+                self.settings.database_path,
+                job.recording_id,
+                RecordingStatus.COMPLETED,
+            )
 
     def _summarize(self, job: Job) -> None:
         recording = self._recording(job.recording_id)
-        summary = self.adapters.summarize(str(recording["content_sha256"]))
         category = str(recording["category"])
-        slug = safe_category_slug(category)
         revision = int(recording["revision"])
+        if (
+            revision != job.input_revision
+            or job.settings_fingerprint
+            != summary_settings_fingerprint(self.summary_adapter, category)
+        ):
+            return
+        transcript = self._load_transcript(job.recording_id, revision)
+        summary = self.summary_adapter.summarize(transcript, category)
+        slug = safe_category_slug(category)
         metadata = {
             "schema_version": 1,
             "recording_id": job.recording_id,
@@ -284,26 +334,17 @@ class FakePipelineHandler:
             "created_at": utc_now(),
             "category": category,
             "category_slug": slug,
+            "summary_fingerprint": self.summary_adapter.fingerprint,
             "summary": summary.model_dump(mode="json"),
         }
-        base = Path(slug) / "요약"
-        write_artifact(
+        write_summary_artifacts(
             self.settings.database_path,
             self.settings.summary_root,
             job.recording_id,
-            "summary_json",
-            base / f"{job.recording_id}.json",
+            revision,
+            slug,
             _json_bytes(metadata),
-            revision,
-        )
-        write_artifact(
-            self.settings.database_path,
-            self.settings.summary_root,
-            job.recording_id,
-            "summary_markdown",
-            base / f"{job.recording_id}.md",
-            _summary_markdown(summary).encode("utf-8"),
-            revision,
+            render_summary_markdown(summary, category),
         )
         if RecordingStatus(str(recording["status"])) is not RecordingStatus.COMPLETED:
             transition_recording(
@@ -394,14 +435,26 @@ class FakePipelineHandler:
             revision,
             schema_version=MARKDOWN_SCHEMA_VERSION,
         )
-        if had_summary:
-            enqueue_job(
+        category = str(recording["category"])
+        if had_summary or category in self.settings.auto_summary_categories:
+            result = enqueue_job(
                 self.settings.database_path,
                 job.recording_id,
                 "summarize",
                 revision,
-                "speaker-edit-summary-v1",
+                summary_settings_fingerprint(self.summary_adapter, category),
             )
+            status = RecordingStatus(str(recording["status"]))
+            if result.created and status in {
+                RecordingStatus.READY_FOR_SUMMARY,
+                RecordingStatus.COMPLETED,
+                RecordingStatus.FAILED,
+            }:
+                transition_recording(
+                    self.settings.database_path,
+                    job.recording_id,
+                    RecordingStatus.SUMMARIZING,
+                )
 
     def _recording(self, recording_id: str) -> sqlite3.Row:
         with connect(self.settings.database_path) as connection:
@@ -688,26 +741,3 @@ class FakePipelineHandler:
 
 def _json_bytes(value: dict[str, Any]) -> bytes:
     return (json.dumps(value, ensure_ascii=False, sort_keys=True, indent=2) + "\n").encode()
-
-
-def _summary_markdown(summary: MeetingSummary) -> str:
-    lines = [
-        "# 요약",
-        "",
-        "## 목적",
-        summary.purpose,
-        "",
-        "## 논의 내용",
-        *[f"- {item}" for item in summary.discussion],
-        "",
-        "## 결정 사항",
-        *[f"- {item}" for item in summary.decisions],
-        "",
-        "## 할 일",
-        *[f"- {item.task}" for item in summary.action_items],
-        "",
-        "## 미해결 사항",
-        *([f"- {item}" for item in summary.open_questions] or ["- 없음"]),
-        "",
-    ]
-    return "\n".join(lines)

@@ -65,6 +65,18 @@ export function updateRecordingCategory(
   );
 }
 
+export function requestRecordingSummary(id: string, expectedRevision: number) {
+  return requestJson<components['schemas']['SummaryRequestResponse']>(
+    `/api/recordings/${encodeURIComponent(id)}/summary`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ expected_revision: expectedRevision }),
+    },
+    [200, 202],
+  );
+}
+
 export function getPersons(signal?: AbortSignal) {
   return requestJson<PersonListResponse>('/api/persons', { signal });
 }

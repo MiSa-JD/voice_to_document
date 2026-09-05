@@ -32,6 +32,7 @@ from app.schema import RecordingStatus, Segment, SpeechModelFingerprints, Transc
 from app.speaker_embeddings import PyannoteSpeakerEmbeddingAdapter, SpeakerEmbeddingAdapter
 from app.speech_failures import speech_failure_policy
 from app.state import transition_recording
+from app.summary import SummaryAdapter
 from app.transcription import (
     TranscriptionResult,
     TranscriptionSegment,
@@ -89,10 +90,16 @@ class RealSpeechPipelineHandler(FakePipelineHandler):
         diarization_adapter: DiarizationAdapter | None = None,
         speaker_embedding_adapter: SpeakerEmbeddingAdapter | None = None,
         classification_adapter: ClassificationAdapter | None = None,
+        summary_adapter: SummaryAdapter | None = None,
         continue_to_documents: bool = True,
     ) -> None:
         # Fake document adapters remain available after R5 speaker review is implemented.
-        super().__init__(settings, logger, classification_adapter=classification_adapter)
+        super().__init__(
+            settings,
+            logger,
+            classification_adapter=classification_adapter,
+            summary_adapter=summary_adapter,
+        )
         self.speaker_embedding_adapter = (
             speaker_embedding_adapter
             or PyannoteSpeakerEmbeddingAdapter(

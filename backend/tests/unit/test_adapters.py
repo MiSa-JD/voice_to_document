@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 from app.adapters import FakeAdapters, FakeFixtureNotFoundError
+from app.schema import MeetingSummary
 
 COMPLETE_HASH = "e202a0e5517a6c4311f67c61e199b26bc1757af4c6b3ec0962fa61b4ff1807fb"
 REVIEW_HASH = "7f8f1230daba23a52a634709c92f22499d52069fbe5199d017bdcaf794f6ead3"
@@ -29,7 +30,9 @@ def test_fake_adapters_are_deterministic_without_network(
         "SPEAKER_01",
     }
     assert adapters.classify(COMPLETE_HASH).category == "회의"
-    assert adapters.summarize(COMPLETE_HASH).action_items[0].task == "초안 준비"
+    summary = adapters.summarize(first, "회의")
+    assert isinstance(summary, MeetingSummary)
+    assert summary.action_items[0].task == "초안 준비"
 
 
 def test_review_fixture_includes_local_document_classification() -> None:
@@ -38,8 +41,7 @@ def test_review_fixture_includes_local_document_classification() -> None:
 
     assert transcript.needs_speaker_review is True
     assert adapters.classify(REVIEW_HASH).category == "기타"
-    with pytest.raises(ValueError, match="no summary"):
-        adapters.summarize(REVIEW_HASH)
+    assert adapters.summarize(transcript, "기타").template == "other"
 
 
 def test_unknown_content_hash_is_rejected() -> None:
