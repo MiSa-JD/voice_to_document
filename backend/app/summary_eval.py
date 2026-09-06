@@ -108,6 +108,7 @@ def run(settings: Settings) -> int:
         api_key=settings.llm_api_key.get_secret_value(),
         model=settings.llm_model,
         max_context_chars=settings.summary_context_max_chars,
+        timeout_seconds=settings.summary_request_timeout_seconds,
     )
     results = evaluate_cases(adapter, load_cases())
     for result in results:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import urllib.error
 import urllib.request
 from collections.abc import Callable
@@ -53,10 +54,12 @@ class OpenAISummaryAdapter:
         model: str,
         max_context_chars: int = 120_000,
         transport: Transport | None = None,
-        timeout_seconds: float = 60,
+        timeout_seconds: float = 300,
     ) -> None:
         if max_context_chars <= 0:
             raise ValueError("max_context_chars must be positive")
+        if not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
+            raise ValueError("timeout_seconds must be finite and positive")
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.model = model

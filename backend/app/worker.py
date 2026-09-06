@@ -84,6 +84,7 @@ def build_handler(config: Settings, logger: logging.Logger) -> JobHandler:
             api_key=config.llm_api_key.get_secret_value(),
             model=config.llm_model,
             max_context_chars=config.summary_context_max_chars,
+            timeout_seconds=config.summary_request_timeout_seconds,
         )
     if config.effective_speech_mode == "real":
         return RealSpeechPipelineHandler(

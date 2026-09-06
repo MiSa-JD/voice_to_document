@@ -12,6 +12,7 @@ import pytest
 from app.config import Settings
 from app.long_transcript import LongTranscriptClassifier
 from app.openai_classification import OpenAIClassificationAdapter
+from app.openai_summary import OpenAISummaryAdapter
 from app.pipeline import FakePipelineHandler
 from app.real_pipeline import RealSpeechPipelineHandler
 from app.worker import build_handler
@@ -70,6 +71,7 @@ def test_worker_builds_all_speech_and_document_mode_combinations(
     settings_values.update(
         {
             "SERVICE_NAME": "worker",
+            "SUMMARY_REQUEST_TIMEOUT_SECONDS": 451,
             "SPEECH_MODE": speech_mode,
             "DOCUMENT_MODE": document_mode,
             "HF_TOKEN": "test-token" if speech_mode == "real" else "",
@@ -89,3 +91,6 @@ def test_worker_builds_all_speech_and_document_mode_combinations(
         isinstance(handler.classification_adapter.direct_adapter, OpenAIClassificationAdapter)
         is real_document
     )
+    if real_document:
+        assert isinstance(handler.summary_adapter, OpenAISummaryAdapter)
+        assert handler.summary_adapter.timeout_seconds == 451

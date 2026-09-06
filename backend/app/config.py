@@ -47,6 +47,13 @@ class Settings(BaseSettings):
         validation_alias="SUMMARY_CONTEXT_MAX_CHARS",
     )
 
+    summary_request_timeout_seconds: float = Field(
+        default=300,
+        gt=0,
+        allow_inf_nan=False,
+        validation_alias="SUMMARY_REQUEST_TIMEOUT_SECONDS",
+    )
+
     ai_mode: Literal["fake", "real"] | None = Field(
         default=None,
         validation_alias="AI_MODE",
@@ -297,6 +304,7 @@ class Settings(BaseSettings):
             "auto_summary_categories": self.auto_summary_categories,
             "classification_context_max_chars": self.classification_context_max_chars,
             "summary_context_max_chars": self.summary_context_max_chars,
+            "summary_request_timeout_seconds": self.summary_request_timeout_seconds,
             "log_level": self.log_level,
         }
 
