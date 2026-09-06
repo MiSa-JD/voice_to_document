@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
+import time
 import uuid
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -32,6 +34,8 @@ class EvaluationResult:
     checks: dict[str, bool]
     passed: bool
     fingerprint: dict[str, object]
+    elapsed_seconds: float = 0
+    failure_reason: str | None = None
 
 
 def load_cases(path: Path = FIXTURE_PATH) -> list[dict[str, Any]]:
@@ -41,6 +45,37 @@ def load_cases(path: Path = FIXTURE_PATH) -> list[dict[str, Any]]:
     return value
 
 
+def long_meeting_case() -> dict[str, Any]:
+    """Public synthetic material; no private recording or provider output."""
+    filler = (
+        "이번 논의에서는 이용자가 자료를 찾는 과정과 안내 문구의 이해도를 검토합니다. "
+        "화면에 표시되는 정보가 실제 처리 상태와 일치하는지 사례별로 살펴보겠습니다. "
+        "아직 합의하지 않은 제안은 확정된 결정으로 기록하지 않고 검토 의견으로 남깁니다. "
+        "설명이 부족한 부분은 다음 검토에서 확인하며 별도 담당자와 기한은 정하지 않았습니다. "
+    )
+    anchors = {
+        0: "오늘 회의의 확정 결정은 시범 서비스 이름을 은하수로 정하는 것입니다. ",
+        45: "중간 점검의 확정 결정은 시범 이용자 수를 240명으로 제한하는 것입니다. ",
+        89: "최종 확정 결정은 출시 전 자막 검색 기능을 필수 제공하는 것입니다. ",
+    }
+    return {
+        "case_id": "public-long-meeting-45min",
+        "category": "회의",
+        "expected_template": "meeting",
+        "segments": [
+            {
+                "start_ms": index * 30_000,
+                "end_ms": (index + 1) * 30_000,
+                "speaker": "SPEAKER_00",
+                "text": anchors.get(index, "") + filler * 2,
+            }
+            for index in range(90)
+        ],
+        "required_terms": ["은하수", "240", "자막 검색"],
+        "required_evidence_segments": [0, 45, 89],
+    }
+
+
 def evaluate_cases(
     adapter: EvaluationAdapter, cases: list[dict[str, Any]]
 ) -> list[EvaluationResult]:
@@ -48,9 +83,10 @@ def evaluate_cases(
     for case in cases:
         transcript = _transcript(case)
         category = str(case["category"])
+        started = time.monotonic()
         try:
             summary = adapter.summarize(transcript, category)
-        except SummaryError:
+        except SummaryError as error:
             results.append(
                 EvaluationResult(
                     case_id=str(case["case_id"]),
@@ -58,6 +94,8 @@ def evaluate_cases(
                     checks={"provider_output": False},
                     passed=False,
                     fingerprint=adapter.fingerprint,
+                    elapsed_seconds=round(time.monotonic() - started, 3),
+                    failure_reason=error.reason if error.reason != "unspecified" else error.code,
                 )
             )
             continue
@@ -90,12 +128,13 @@ def evaluate_cases(
                 checks=checks,
                 passed=all(checks.values()),
                 fingerprint=fingerprint,
+                elapsed_seconds=round(time.monotonic() - started, 3),
             )
         )
     return results
 
 
-def run(settings: Settings) -> int:
+def run(settings: Settings, *, long: bool = False) -> int:
     if (
         not isinstance(settings.llm_api_key, SecretStr)
         or not settings.llm_api_key.get_secret_value()
@@ -110,7 +149,7 @@ def run(settings: Settings) -> int:
         max_context_chars=settings.summary_context_max_chars,
         timeout_seconds=settings.summary_request_timeout_seconds,
     )
-    results = evaluate_cases(adapter, load_cases())
+    results = evaluate_cases(adapter, [long_meeting_case()] if long else load_cases())
     for result in results:
         print(json.dumps(asdict(result), ensure_ascii=False, sort_keys=True))
     print(
@@ -236,8 +275,11 @@ def _valid_fingerprint(value: dict[str, object]) -> bool:
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--long", action="store_true", help="공개 합성 45분 장문 회의 한 건 평가")
+    args = parser.parse_args()
     try:
-        status = run(Settings())  # type: ignore[call-arg]
+        status = run(Settings(), long=args.long)  # type: ignore[call-arg]
     except ValueError as error:
         raise SystemExit(str(error)) from None
     raise SystemExit(status)

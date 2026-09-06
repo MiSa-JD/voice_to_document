@@ -17,6 +17,26 @@ class SummaryAdapter(Protocol):
 class SummaryError(RuntimeError):
     code = "SUMMARY_INVALID_OUTPUT"
 
+    def __init__(self, message: str, *, reason: str = "unspecified") -> None:
+        super().__init__(message)
+        self.reason = (
+            reason
+            if reason
+            in {
+                "response_format",
+                "refusal",
+                "incomplete",
+                "empty_output",
+                "json_decode",
+                "schema",
+                "evidence",
+                "request_rejected",
+                "input_validation",
+                "unexpected",
+            }
+            else "unspecified"
+        )
+
 
 class SummaryProviderError(SummaryError):
     pass

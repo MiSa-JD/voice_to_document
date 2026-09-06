@@ -56,4 +56,3 @@
 - R6 화자 자동 식별 보정
 - 새 외부 dependency, DB migration, 다중 LLM 공급자
 - 비공개 실제 녹음이나 transcript를 fixture 또는 진행 문서에 추가하는 작업
-

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import logging
 import shutil
 from pathlib import Path
@@ -277,3 +278,53 @@ def test_summary_permanent_failure_protects_new_revision(
             "SELECT status FROM recordings WHERE id = ?", (recording_id,)
         ).fetchone()
         assert row[0] == ("SUMMARIZING" if stale else "FAILED")
+
+
+@pytest.mark.parametrize(
+    ("failure", "code", "reason"),
+    [
+        (
+            SummaryProviderError("private-test-secret", reason="evidence"),
+            "SUMMARY_INVALID_OUTPUT",
+            "evidence",
+        ),
+        (ValueError("private-test-secret"), "SUMMARY_INVALID_INPUT", "input_validation"),
+        (RuntimeError("private-test-secret"), "SUMMARY_PIPELINE_ERROR", "unexpected"),
+    ],
+)
+def test_summary_boundary_logs_only_safe_reason(
+    settings_values: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    failure: Exception,
+    code: str,
+    reason: str,
+) -> None:
+    from app.log import JsonFormatter
+
+    settings, client, recording_id = _manual_summary_recording(settings_values)
+    client.post(f"/api/recordings/{recording_id}/summary", json={"expected_revision": 1})
+    output = io.StringIO()
+    log_handler = logging.StreamHandler(output)
+    log_handler.setFormatter(JsonFormatter("test"))
+    logger = logging.getLogger("safe-summary-test")
+    logger.addHandler(log_handler)
+    handler = FakePipelineHandler(settings, logger)
+
+    def fail(*args: Any) -> None:
+        raise failure
+
+    monkeypatch.setattr(handler.summary_adapter, "summarize", fail)
+    try:
+        assert process_one_job(settings.database_path, handler, logger)
+    finally:
+        logger.removeHandler(log_handler)
+    assert reason in output.getvalue()
+    assert "private-test-secret" not in output.getvalue()
+    assert "INVALID_FAKE_RESULT" not in output.getvalue()
+    with connect(settings.database_path) as connection:
+        row = connection.execute(
+            "SELECT last_error_code, last_error_message FROM recordings WHERE id = ?",
+            (recording_id,),
+        ).fetchone()
+        assert row[0] == code
+        assert "private-test-secret" not in row[1]

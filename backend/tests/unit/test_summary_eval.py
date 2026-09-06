@@ -6,7 +6,7 @@ import uuid
 from typing import Any
 
 from app.openai_summary import OpenAISummaryAdapter
-from app.summary_eval import evaluate_cases, load_cases
+from app.summary_eval import evaluate_cases, load_cases, long_meeting_case
 
 
 def _fact(case: dict[str, Any]) -> dict[str, object]:
@@ -118,3 +118,23 @@ def test_evaluation_checks_grounding_null_rendering_and_sanitized_output() -> No
     assert "private-test-key" not in public_results
     assert "확률변수" not in public_results
     assert len(requests) == 5
+
+
+def test_long_meeting_preserves_beginning_middle_end_and_rejects_omissions() -> None:
+    case = long_meeting_case()
+    assert 30_000 <= sum(len(item["text"]) for item in case["segments"]) <= 50_000
+    assert case["segments"][-1]["end_ms"] == 45 * 60 * 1000
+    payload = _summary(case)
+    adapter = OpenAISummaryAdapter(
+        base_url="https://example.invalid/v1",
+        api_key="private-test-key",
+        model="test",
+        transport=lambda request, timeout: _response(payload),
+    )
+    assert evaluate_cases(adapter, [case])[0].passed
+    payload["purpose"] = {**_fact(case), "text": "은하수 240"}
+    assert not evaluate_cases(adapter, [case])[0].checks["required_facts"]
+    payload["purpose"] = {**_fact(case), "evidence": []}
+    result = evaluate_cases(adapter, [case])[0]
+    assert not result.passed
+    assert result.failure_reason == "schema"
