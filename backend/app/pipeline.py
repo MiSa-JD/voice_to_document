@@ -49,7 +49,6 @@ from app.summary import (
     RetryableSummaryError,
     SummaryAdapter,
     SummaryError,
-    SummaryTimeoutError,
     summary_settings_fingerprint,
 )
 from app.summary_renderer import render_summary_markdown
@@ -128,6 +127,29 @@ class FakePipelineHandler:
             }
 
     def __call__(self, job: Job) -> None:
+        if job.kind == "summarize":
+            try:
+                self._summarize(job)
+            except RetryableSummaryError as error:
+                raise RetryableJobError(error.code, "summary provider unavailable") from None
+            except SummaryError as error:
+                self._log_summary_failure(job, error.reason)
+                raise PermanentJobError(error.code, "summary result is invalid") from None
+            except OSError:
+                raise RetryableJobError(
+                    "ARTIFACT_IO_ERROR", "summary artifact write failed"
+                ) from None
+            except (ValueError, TypeError, KeyError, FakeFixtureNotFoundError):
+                self._log_summary_failure(job, "input_validation")
+                raise PermanentJobError(
+                    "SUMMARY_INVALID_INPUT", "summary input is invalid"
+                ) from None
+            except Exception:
+                self._log_summary_failure(job, "unexpected")
+                raise PermanentJobError(
+                    "SUMMARY_PIPELINE_ERROR", "summary processing failed"
+                ) from None
+            return
         if job.kind == "finalize_speakers":
             try:
                 result = finalize_speaker_embeddings(
@@ -183,8 +205,6 @@ class FakePipelineHandler:
                 self._transcribe(job)
             elif job.kind == "classify":
                 self._classify(job)
-            elif job.kind == "summarize":
-                self._summarize(job)
             else:
                 raise PermanentJobError("UNSUPPORTED_JOB_KIND", f"unsupported job: {job.kind}")
         except ClassificationTimeoutError as error:
@@ -198,17 +218,6 @@ class FakePipelineHandler:
         except ClassificationError as error:
             self._mark_failed(job.recording_id, error.code, "분류 결과가 유효하지 않습니다.")
             raise PermanentJobError(error.code, "classification result is invalid") from error
-        except SummaryTimeoutError as error:
-            self._mark_failed(job.recording_id, error.code, "요약 응답 시간이 초과되었습니다.")
-            raise RetryableJobError(error.code, "summary timed out") from error
-        except RetryableSummaryError as error:
-            self._mark_failed(
-                job.recording_id, error.code, "요약 공급자에 일시적으로 연결할 수 없습니다."
-            )
-            raise RetryableJobError(error.code, "summary provider unavailable") from error
-        except SummaryError as error:
-            self._mark_failed(job.recording_id, error.code, "요약 결과가 유효하지 않습니다.")
-            raise PermanentJobError(error.code, "summary result is invalid") from error
         except TranscriptRendererError as error:
             self._mark_failed(
                 job.recording_id,
@@ -312,6 +321,17 @@ class FakePipelineHandler:
                 job.recording_id,
                 RecordingStatus.COMPLETED,
             )
+
+    def _log_summary_failure(self, job: Job, reason: str) -> None:
+        self.logger.warning(
+            "summary_failed",
+            extra={
+                "stage": "summarize",
+                "job_id": job.id,
+                "attempt": job.attempts,
+                "failure_reason": reason,
+            },
+        )
 
     def _summarize(self, job: Job) -> None:
         recording = self._recording(job.recording_id)

@@ -91,6 +91,19 @@ def fail_job(
         if retry_at is None:
             connection.execute(
                 """
+                UPDATE recordings
+                SET status = 'FAILED', last_error_code = ?, last_error_message = ?, updated_at = ?
+                WHERE status = 'SUMMARIZING' AND EXISTS (
+                    SELECT 1 FROM jobs
+                    WHERE jobs.id = ? AND jobs.kind = 'summarize'
+                      AND jobs.recording_id = recordings.id
+                      AND jobs.input_revision = recordings.revision
+                )
+                """,
+                (error_code, error_message, timestamp, job_id),
+            )
+            connection.execute(
+                """
                 UPDATE retranscription_requests
                 SET content_hint = NULL, terms_json = NULL,
                     completed_at = ?, updated_at = ?

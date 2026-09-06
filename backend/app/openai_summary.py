@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import urllib.error
 import urllib.request
 from collections.abc import Callable
-from typing import Any, cast
+from typing import cast
 
 from pydantic import TypeAdapter, ValidationError
 
@@ -53,10 +54,12 @@ class OpenAISummaryAdapter:
         model: str,
         max_context_chars: int = 120_000,
         transport: Transport | None = None,
-        timeout_seconds: float = 60,
+        timeout_seconds: float = 300,
     ) -> None:
         if max_context_chars <= 0:
             raise ValueError("max_context_chars must be positive")
+        if not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
+            raise ValueError("timeout_seconds must be finite and positive")
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.model = model
@@ -108,15 +111,21 @@ class OpenAISummaryAdapter:
                 schema,
                 f"{template}_summary",
             )
+            reason = "json_decode"
             try:
+                value = json.loads(raw)
+                reason = "schema"
                 model = summary_model_for_category(category)
-                result = TypeAdapter(model).validate_python(_decode_object(raw))
+                result = TypeAdapter(model).validate_python(value)
                 summary = cast(CategorySummary, result)
+                reason = "evidence"
                 validate_summary_evidence(summary, transcript)
                 return summary
             except (ValidationError, ValueError, TypeError):
                 if attempt:
-                    raise SummaryProviderError("summary provider returned invalid output") from None
+                    raise SummaryProviderError(
+                        "summary provider returned invalid output", reason=reason
+                    ) from None
         raise AssertionError("unreachable")
 
     def _extract_facts(
@@ -132,9 +141,16 @@ class OpenAISummaryAdapter:
                 schema,
                 "summary_evidence",
             )
+            reason = "json_decode"
             try:
-                value = _decode_object(raw)
+                value = json.loads(raw)
+                reason = "schema"
+                if not isinstance(value, dict):
+                    raise ValueError("facts must be an object")
                 facts = TypeAdapter(list[SummaryFact]).validate_python(value.get("facts"))
+                if not facts:
+                    raise ValueError("empty facts")
+                reason = "evidence"
                 validate_summary_evidence(
                     OtherSummary(
                         template="other",
@@ -154,7 +170,9 @@ class OpenAISummaryAdapter:
                 return facts
             except (ValidationError, ValueError, TypeError, IndexError):
                 if attempt:
-                    raise SummaryProviderError("summary provider returned invalid output") from None
+                    raise SummaryProviderError(
+                        "summary provider returned invalid output", reason=reason
+                    ) from None
         raise AssertionError("unreachable")
 
     def _request(self, prompt: str, schema: dict[str, object], name: str) -> str:
@@ -192,11 +210,15 @@ class OpenAISummaryAdapter:
         except urllib.error.HTTPError as error:
             if error.code in {408, 429} or error.code >= 500:
                 raise RetryableSummaryError("summary provider is temporarily unavailable") from None
-            raise SummaryProviderError("summary provider rejected request") from None
+            raise SummaryProviderError(
+                "summary provider rejected request", reason="request_rejected"
+            ) from None
         except (urllib.error.URLError, ConnectionError, OSError) as error:
             raise RetryableSummaryError("summary provider is temporarily unavailable") from error
         except (json.JSONDecodeError, UnicodeDecodeError, TypeError):
-            raise SummaryProviderError("summary provider returned invalid output") from None
+            raise SummaryProviderError(
+                "summary provider returned invalid output", reason="response_format"
+            ) from None
         return _output_text(response)
 
 
@@ -207,12 +229,18 @@ def _urlopen(request: urllib.request.Request, timeout: float) -> bytes:
 
 def _output_text(value: object) -> str:
     if not isinstance(value, dict):
-        raise SummaryProviderError("summary provider returned invalid output")
+        raise SummaryProviderError(
+            "summary provider returned invalid output", reason="response_format"
+        )
     if value.get("status") == "incomplete":
-        raise SummaryProviderError("summary provider returned incomplete output")
+        raise SummaryProviderError(
+            "summary provider returned incomplete output", reason="incomplete"
+        )
     output = value.get("output")
     if not isinstance(output, list):
-        raise SummaryProviderError("summary provider returned invalid output")
+        raise SummaryProviderError(
+            "summary provider returned invalid output", reason="response_format"
+        )
     texts: list[str] = []
     for item in output:
         if not isinstance(item, dict) or not isinstance(item.get("content"), list):
@@ -221,23 +249,13 @@ def _output_text(value: object) -> str:
             if not isinstance(part, dict):
                 continue
             if part.get("type") == "refusal":
-                raise SummaryProviderError("summary provider refused request")
+                raise SummaryProviderError("summary provider refused request", reason="refusal")
             if part.get("type") == "output_text" and isinstance(part.get("text"), str):
                 texts.append(part["text"])
     result = "".join(texts).strip()
     if not result:
-        raise SummaryProviderError("summary provider returned empty output")
+        raise SummaryProviderError("summary provider returned empty output", reason="empty_output")
     return result
-
-
-def _decode_object(raw: str) -> dict[str, Any]:
-    try:
-        value = json.loads(raw)
-    except json.JSONDecodeError:
-        raise ValueError("invalid JSON") from None
-    if not isinstance(value, dict):
-        raise ValueError("summary must be an object")
-    return value
 
 
 def _transcript_slices(transcript: Transcript) -> tuple[SegmentSlice, ...]:

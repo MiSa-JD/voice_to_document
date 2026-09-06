@@ -216,3 +216,54 @@ def test_second_invalid_output_fails_without_provider_body_or_key() -> None:
     assert private not in str(raised.value)
     assert "sk-private-value" not in str(raised.value)
     assert len(transport.requests) == 2
+
+
+@pytest.mark.parametrize(
+    ("response", "reason", "calls"),
+    [
+        (b"private-response", "response_format", 1),
+        (b"[]", "response_format", 1),
+        (_response("", status="incomplete"), "incomplete", 1),
+        (b'{"output":[{"content":[{"type":"refusal"}]}]}', "refusal", 1),
+        (_response(" "), "empty_output", 1),
+        (_response("private-response"), "json_decode", 2),
+        (_response("{}"), "schema", 2),
+        (_response("[]"), "schema", 2),
+        (_response(_meeting(purpose=_fact(quote="private-response"))), "evidence", 2),
+    ],
+)
+def test_safe_output_failure_reasons(response: bytes, reason: str, calls: int) -> None:
+    transport = RecordingTransport(*([response] * calls))
+    with pytest.raises(SummaryProviderError) as raised:
+        _adapter(transport).summarize(_transcript(), "회의")
+    assert raised.value.reason == reason
+    assert raised.value.code == "SUMMARY_INVALID_OUTPUT"
+    assert "private-response" not in str(raised.value)
+    assert len(transport.requests) == calls
+
+
+@pytest.mark.parametrize(
+    ("raw", "reason"),
+    [
+        ("private-response", "json_decode"),
+        ("[]", "schema"),
+        ('{"facts": []}', "schema"),
+        (json.dumps({"facts": [_fact(quote="private-response")]}), "evidence"),
+    ],
+)
+def test_chunk_failure_reasons(raw: str, reason: str) -> None:
+    transport = RecordingTransport(_response(raw), _response(raw))
+    with pytest.raises(SummaryProviderError) as raised:
+        _adapter(transport, max_context_chars=5).summarize(_transcript(), "회의")
+    assert raised.value.reason == reason
+    assert len(transport.requests) == 2
+
+
+def test_timeout_is_forwarded_without_changing_fingerprint() -> None:
+    transport = RecordingTransport(_response(_meeting()))
+    adapter = _adapter(transport)
+    fingerprint = adapter.fingerprint
+    adapter.timeout_seconds = 450.5
+    adapter.summarize(_transcript(), "회의")
+    assert transport.requests[0][1] == 450.5
+    assert fingerprint == adapter.fingerprint

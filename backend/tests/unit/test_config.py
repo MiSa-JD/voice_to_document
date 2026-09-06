@@ -346,3 +346,17 @@ def test_secret_values_are_masked(settings_values: dict[str, Any]) -> None:
     rendered = repr(Settings(**settings_values))
     assert "hf_private_test_value" not in rendered
     assert "sk-private-test-value" not in rendered
+
+
+@pytest.mark.parametrize("value", [0, -1, "nan", "inf", "-inf", "invalid"])
+def test_summary_timeout_rejects_invalid_values(
+    settings_values: dict[str, Any], value: object
+) -> None:
+    with pytest.raises(ValidationError, match="SUMMARY_REQUEST_TIMEOUT_SECONDS"):
+        Settings(**{**settings_values, "SUMMARY_REQUEST_TIMEOUT_SECONDS": value})
+
+
+def test_summary_timeout_defaults_and_override(settings_values: dict[str, Any]) -> None:
+    assert Settings(**settings_values).summary_request_timeout_seconds == 300
+    settings = Settings(**{**settings_values, "SUMMARY_REQUEST_TIMEOUT_SECONDS": 450.5})
+    assert settings.public_summary()["summary_request_timeout_seconds"] == 450.5
