@@ -199,15 +199,10 @@ class FakePipelineHandler:
             self._mark_failed(job.recording_id, error.code, "분류 결과가 유효하지 않습니다.")
             raise PermanentJobError(error.code, "classification result is invalid") from error
         except SummaryTimeoutError as error:
-            self._mark_failed(job.recording_id, error.code, "요약 응답 시간이 초과되었습니다.")
             raise RetryableJobError(error.code, "summary timed out") from error
         except RetryableSummaryError as error:
-            self._mark_failed(
-                job.recording_id, error.code, "요약 공급자에 일시적으로 연결할 수 없습니다."
-            )
             raise RetryableJobError(error.code, "summary provider unavailable") from error
         except SummaryError as error:
-            self._mark_failed(job.recording_id, error.code, "요약 결과가 유효하지 않습니다.")
             raise PermanentJobError(error.code, "summary result is invalid") from error
         except TranscriptRendererError as error:
             self._mark_failed(
@@ -219,7 +214,10 @@ class FakePipelineHandler:
                 "TRANSCRIPT_RENDER_ERROR", "transcript markdown render failed"
             ) from error
         except OSError as error:
-            self._mark_failed(job.recording_id, "ARTIFACT_IO_ERROR", "결과 파일을 쓸 수 없습니다.")
+            if job.kind != "summarize":
+                self._mark_failed(
+                    job.recording_id, "ARTIFACT_IO_ERROR", "결과 파일을 쓸 수 없습니다."
+                )
             raise RetryableJobError("ARTIFACT_IO_ERROR", "artifact write failed") from error
         except (FakeFixtureNotFoundError, ValueError) as error:
             self._mark_failed(
