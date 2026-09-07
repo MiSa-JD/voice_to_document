@@ -267,3 +267,96 @@ def test_timeout_is_forwarded_without_changing_fingerprint() -> None:
     adapter.summarize(_transcript(), "회의")
     assert transport.requests[0][1] == 450.5
     assert fingerprint == adapter.fingerprint
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "kind"),
+    [
+        ("segment_id", "00000000-0000-0000-0000-000000000099", "unknown_segment"),
+        ("start_ms", 1, "timestamp_mismatch"),
+        ("quote", "PRIVATE_SENTINEL", "quote_mismatch"),
+    ],
+)
+def test_evidence_diagnostics_use_response_paths(field: str, value: object, kind: str) -> None:
+    from app.schema import SummaryFact, SummaryValidationError, validate_fact_evidence
+
+    raw = _fact()
+    raw["evidence"][0][field] = value  # type: ignore[index]
+    fact = SummaryFact.model_validate(raw)
+    with pytest.raises(SummaryValidationError) as raised:
+        validate_fact_evidence([("facts[2]", fact)], _transcript())
+    assert raised.value.validation_type == kind
+    assert raised.value.field_path == "facts[2].evidence[0]"
+    assert "PRIVATE_SENTINEL" not in str(raised.value)
+
+
+def test_chunk_membership_has_fixed_diagnostic() -> None:
+    from app.schema import SummaryFact, SummaryValidationError, validate_fact_evidence
+
+    with pytest.raises(SummaryValidationError) as raised:
+        validate_fact_evidence(
+            [("facts[0]", SummaryFact.model_validate(_fact()))], _transcript(), allowed_ids=set()
+        )
+    assert raised.value.validation_type == "outside_chunk"
+    assert raised.value.field_path == "facts[0].evidence[0]"
+
+
+@pytest.mark.parametrize(
+    ("value", "kind", "path"),
+    [
+        ({}, "missing", "text"),
+        ({"text": 12, "evidence": []}, "string_type", "text"),
+        ({"text": "", "evidence": []}, "string_too_short", "text"),
+        ({"text": "ok", "evidence": []}, "too_short", "evidence"),
+    ],
+)
+def test_schema_diagnostic_types(value: object, kind: str, path: str) -> None:
+    from app.schema import SummaryFact
+    from app.summary import summary_validation_details
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError) as raised:
+        SummaryFact.model_validate(value)
+    details = summary_validation_details(raised.value)
+    assert details["validation_errors"][0] == {  # type: ignore[index]
+        "validation_type": kind,
+        "field_path": path,
+    }
+
+
+def test_schema_diagnostics_redact_keys_and_limit_details() -> None:
+    from app.schema import SummaryFact
+    from app.summary import summary_validation_details
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError) as raised:
+        SummaryFact.model_validate({f"PRIVATE_SENTINEL_{i}": "SECRET_VALUE" for i in range(9)})
+    details = summary_validation_details(raised.value, prefix="facts")
+    assert details["error_count"] == 11
+    assert details["omitted_error_count"] == 6
+    assert len(details["validation_errors"]) == 5  # type: ignore[arg-type]
+    assert "unknown_field" in json.dumps(details)
+    assert "PRIVATE_SENTINEL" not in json.dumps(details)
+    assert "SECRET_VALUE" not in json.dumps(details)
+
+
+def test_unknown_pydantic_error_type_is_redacted() -> None:
+    from app.summary import summary_validation_details
+    from pydantic import ValidationError
+    from pydantic_core import PydanticCustomError
+
+    error = ValidationError.from_exception_data(
+        "private",
+        [
+            {
+                "type": PydanticCustomError("PRIVATE_TYPE", "PRIVATE_MESSAGE"),
+                "loc": ("PRIVATE_KEY", 2),
+                "input": "PRIVATE_INPUT",
+            }
+        ],
+    )
+    details = summary_validation_details(error)
+    assert details["validation_errors"] == [
+        {"validation_type": "unknown_type", "field_path": "unknown_field[2]"}
+    ]
+    assert "PRIVATE" not in json.dumps(details)

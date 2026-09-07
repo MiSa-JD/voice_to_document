@@ -13,11 +13,12 @@ from pydantic import TypeAdapter, ValidationError
 from app.long_transcript import SegmentSlice, chunk_transcript, transcript_character_count
 from app.schema import (
     CategorySummary,
-    OtherSummary,
     SummaryFact,
+    SummaryValidationError,
     Transcript,
     summary_model_for_category,
     summary_template_for_category,
+    validate_fact_evidence,
     validate_summary_evidence,
 )
 from app.summary import (
@@ -146,27 +147,16 @@ class OpenAISummaryAdapter:
                 value = json.loads(raw)
                 reason = "schema"
                 if not isinstance(value, dict):
-                    raise ValueError("facts must be an object")
+                    raise SummaryValidationError("object_required", "$")
                 facts = TypeAdapter(list[SummaryFact]).validate_python(value.get("facts"))
                 if not facts:
-                    raise ValueError("empty facts")
+                    raise SummaryValidationError("empty_facts", "facts")
                 reason = "evidence"
-                validate_summary_evidence(
-                    OtherSummary(
-                        template="other",
-                        key_summary=facts[0],
-                        key_facts=facts[1:],
-                        follow_ups=[],
-                    ),
+                validate_fact_evidence(
+                    [(f"facts[{index}]", fact) for index, fact in enumerate(facts)],
                     transcript,
+                    allowed_ids={item.segment_id for item in chunk},
                 )
-                allowed_ids = {item.segment_id for item in chunk}
-                if any(
-                    str(evidence.segment_id) not in allowed_ids
-                    for fact in facts
-                    for evidence in fact.evidence
-                ):
-                    raise ValueError("chunk evidence leaves supplied segments")
                 return facts
             except (ValidationError, ValueError, TypeError, IndexError):
                 if attempt:
