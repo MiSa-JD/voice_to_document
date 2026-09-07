@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import io
+import json
 import logging
 import shutil
+import urllib.request
 from pathlib import Path
 from typing import Any
 
@@ -263,7 +265,7 @@ def test_summary_permanent_failure_protects_new_revision(
     client.post(f"/api/recordings/{recording_id}/summary", json={"expected_revision": 1})
     handler = FakePipelineHandler(settings, logging.getLogger("test"))
 
-    def fail(*args: Any) -> None:
+    def fail(*args: Any, **kwargs: Any) -> None:
         if stale:
             with connect(settings.database_path) as connection:
                 connection.execute(
@@ -310,7 +312,7 @@ def test_summary_boundary_logs_only_safe_reason(
     logger.addHandler(log_handler)
     handler = FakePipelineHandler(settings, logger)
 
-    def fail(*args: Any) -> None:
+    def fail(*args: Any, **kwargs: Any) -> None:
         raise failure
 
     monkeypatch.setattr(handler.summary_adapter, "summarize", fail)
@@ -328,3 +330,113 @@ def test_summary_boundary_logs_only_safe_reason(
         ).fetchone()
         assert row[0] == code
         assert "private-test-secret" not in row[1]
+
+
+@pytest.mark.parametrize("succeeds", [True, False])
+def test_worker_diagnostics_link_actual_job_revision_and_result(
+    settings_values: dict[str, Any],
+    succeeds: bool,
+) -> None:
+    from app.log import JsonFormatter
+    from app.openai_summary import OpenAISummaryAdapter
+    from app.summary import summary_settings_fingerprint
+
+    settings, client, recording_id = _manual_summary_recording(settings_values)
+    output = io.StringIO()
+    sink = logging.StreamHandler(output)
+    sink.setFormatter(JsonFormatter("worker-test"))
+    logger = logging.Logger("worker-test", logging.INFO)
+    logger.addHandler(sink)
+    calls = 0
+
+    def transport(request: urllib.request.Request, timeout: float) -> bytes:
+        nonlocal calls
+        calls += 1
+        assert isinstance(request.data, bytes)
+        body = json.loads(request.data)
+        material = json.loads(body["input"].split("\n")[-1])
+        segment = material["segments"][0]
+        fact = {
+            "text": "공개 테스트 사실",
+            "evidence": [
+                {
+                    "segment_id": segment["segment_id"],
+                    "start_ms": segment["start_ms"],
+                    "end_ms": segment["end_ms"],
+                    "quote": None,
+                }
+            ],
+        }
+        value = (
+            {
+                "template": "meeting",
+                "purpose": fact,
+                "discussion": [],
+                "decisions": [],
+                "action_items": [],
+                "open_questions": [],
+            }
+            if succeeds and calls == 2
+            else {"PRIVATE_KEY": "PRIVATE_VALUE"}
+        )
+        return json.dumps(
+            {
+                "output": [
+                    {
+                        "content": [
+                            {
+                                "type": "output_text",
+                                "text": json.dumps(value),
+                            }
+                        ]
+                    }
+                ]
+            }
+        ).encode()
+
+    adapter = OpenAISummaryAdapter(
+        base_url="https://example.invalid",
+        api_key="PRIVATE_KEY",
+        model="test",
+        transport=transport,
+    )
+    # Queue with the adapter fingerprint used by the worker in this test.
+    response = client.post(f"/api/recordings/{recording_id}/summary", json={"expected_revision": 1})
+    assert response.status_code == 202
+    with connect(settings.database_path) as connection:
+        connection.execute(
+            "UPDATE jobs SET settings_fingerprint = ?, attempts = 1 "
+            "WHERE recording_id = ? AND kind = 'summarize'",
+            (summary_settings_fingerprint(adapter, "회의"), recording_id),
+        )
+    handler = FakePipelineHandler(settings, logger)
+    handler.summary_adapter = adapter
+    assert process_one_job(settings.database_path, handler, logger)
+    events = [json.loads(line) for line in output.getvalue().splitlines()]
+    diagnostics = [
+        e
+        for e in events
+        if e["event"].startswith("summary_validation") or e["event"] == "summary_request_started"
+    ]
+    assert len(diagnostics) == 4
+    outcome = next(
+        e for e in events if e["event"] == ("job_succeeded" if succeeds else "job_failed")
+    )
+    assert all(e["job_id"] == outcome["job_id"] for e in diagnostics)
+    assert all(e["job_attempt"] == outcome["attempt"] == 2 for e in diagnostics)
+    assert all(e["input_revision"] == 1 for e in diagnostics)
+    assert [e["provider_attempt"] for e in diagnostics] == [1, 1, 2, 2]
+    assert diagnostics[-1]["event"] == (
+        "summary_validation_succeeded" if succeeds else "summary_validation_failed"
+    )
+    assert "PRIVATE" not in output.getvalue()
+    assert "exception" not in output.getvalue()
+    with connect(settings.database_path) as connection:
+        row = connection.execute(
+            "SELECT status, error_code, error_message FROM jobs WHERE id = ?",
+            (outcome["job_id"],),
+        ).fetchone()
+    assert row["status"] == ("succeeded" if succeeds else "failed")
+    if not succeeds:
+        assert row["error_code"] == "SUMMARY_INVALID_OUTPUT"
+        assert "PRIVATE" not in row["error_message"]

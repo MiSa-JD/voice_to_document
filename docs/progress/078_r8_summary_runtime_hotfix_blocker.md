@@ -1,5 +1,15 @@
 # R8 장문 요약 운영 hotfix 차단 기록
 
+## 후속 상태 (2026-09-07)
+
+PR #52의 timeout·재시도 상태·상위 실패 사유 변경은 main에 병합됐다.
+이하 내용은 당시의 문제와 작업 범위를 보존한 이력이다.
+운영 schema/evidence 실패의 세부 원인은 여전히 확인해야 한다.
+[082 계획](082_summary_validation_diagnostics_plan.md)에 따른 세부 진단을 구현했으며,
+[085 검증·서버 인계](085_summary_validation_verification.md)의 별도 배포·재현 후
+원인에 맞는 수정·회귀·운영 재검증·병합까지 확인해야 R8 완료를 판단할 수 있다.
+R8은 BLOCKED, R9·R10은 NOT STARTED를 유지한다.
+
 ## 우선순위 결정
 
 - **R9 작업을 시작하지 않는다.** 먼저 이 문서의 요약 운영 문제를 독립 hotfix PR로 해결한다.

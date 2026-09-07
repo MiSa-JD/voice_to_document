@@ -230,25 +230,53 @@ def summary_model_for_category(category: str) -> type[StrictModel]:
     )
 
 
-def validate_summary_evidence(summary: CategorySummary, transcript: Transcript) -> None:
+class SummaryValidationError(ValueError):
+    """Fixed diagnostic labels; never includes evidence values."""
+
+    def __init__(self, validation_type: str, field_path: str) -> None:
+        super().__init__(
+            {
+                "unknown_segment": "summary evidence references unknown segment",
+                "timestamp_mismatch": "summary evidence timestamps do not match transcript",
+                "quote_mismatch": "summary evidence quote is not present in transcript",
+                "outside_chunk": "chunk evidence leaves supplied segments",
+            }.get(validation_type, validation_type)
+        )
+        self.validation_type = validation_type
+        self.field_path = field_path
+
+
+def validate_fact_evidence(
+    facts: list[tuple[str, SummaryFact | ActionItem]],
+    transcript: Transcript,
+    *,
+    allowed_ids: set[str] | None = None,
+) -> None:
     segments = {segment.id: segment for segment in transcript.segments}
-    for evidence in _summary_evidence(summary):
-        segment = segments.get(evidence.segment_id)
-        if segment is None:
-            raise ValueError(f"summary evidence references unknown segment: {evidence.segment_id}")
-        if (evidence.start_ms, evidence.end_ms) != (segment.start_ms, segment.end_ms):
-            raise ValueError("summary evidence timestamps do not match transcript")
-        if evidence.quote is not None and evidence.quote not in segment.text:
-            raise ValueError("summary evidence quote is not present in transcript")
+    for path, fact in facts:
+        for index, evidence in enumerate(fact.evidence):
+            location = f"{path}.evidence[{index}]"
+            segment = segments.get(evidence.segment_id)
+            if segment is None:
+                raise SummaryValidationError("unknown_segment", location)
+            if (evidence.start_ms, evidence.end_ms) != (segment.start_ms, segment.end_ms):
+                raise SummaryValidationError("timestamp_mismatch", location)
+            if evidence.quote is not None and evidence.quote not in segment.text:
+                raise SummaryValidationError("quote_mismatch", location)
+    # Preserve the original order: validate all evidence before checking chunk membership.
+    if allowed_ids is not None:
+        for path, fact in facts:
+            for index, evidence in enumerate(fact.evidence):
+                if str(evidence.segment_id) not in allowed_ids:
+                    raise SummaryValidationError("outside_chunk", f"{path}.evidence[{index}]")
 
 
-def _summary_evidence(summary: CategorySummary) -> list[Evidence]:
-    evidence: list[Evidence] = []
+def validate_summary_evidence(summary: CategorySummary, transcript: Transcript) -> None:
+    facts: list[tuple[str, SummaryFact | ActionItem]] = []
     for name, value in summary:
-        if name == "template":
-            continue
         values = value if isinstance(value, list) else [value]
-        for item in values:
+        for index, item in enumerate(values):
             if isinstance(item, (SummaryFact, ActionItem)):
-                evidence.extend(item.evidence)
-    return evidence
+                path = f"{name}[{index}]" if isinstance(value, list) else name
+                facts.append((path, item))
+    validate_fact_evidence(facts, transcript)

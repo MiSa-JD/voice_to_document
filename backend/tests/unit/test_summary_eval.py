@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+import logging
 import urllib.request
 import uuid
 from typing import Any
 
+import pytest
 from app.openai_summary import OpenAISummaryAdapter
 from app.summary_eval import evaluate_cases, load_cases, long_meeting_case
 
@@ -94,7 +96,10 @@ def test_committed_summary_cases_cover_five_templates_without_private_values() -
     assert "LLM_API_KEY" not in serialized
 
 
-def test_evaluation_checks_grounding_null_rendering_and_sanitized_output() -> None:
+def test_evaluation_checks_grounding_null_rendering_and_sanitized_output(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.INFO, logger="summary_eval")
     cases = load_cases()
     responses = [_response(_summary(case)) for case in cases]
     requests: list[urllib.request.Request] = []
@@ -118,6 +123,12 @@ def test_evaluation_checks_grounding_null_rendering_and_sanitized_output() -> No
     assert "private-test-key" not in public_results
     assert "확률변수" not in public_results
     assert len(requests) == 5
+    events = [record for record in caplog.records if record.name == "summary_eval"]
+    assert [record.__dict__["case_id"] for record in events] == [
+        case["case_id"] for case in cases for _ in range(2)
+    ]
+    assert all(not hasattr(record, "job_id") for record in events)
+    assert all(record.__dict__["input_revision"] == 1 for record in events)
 
 
 def test_long_meeting_preserves_beginning_middle_end_and_rejects_omissions() -> None:

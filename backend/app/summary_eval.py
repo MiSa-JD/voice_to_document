@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import logging
 import time
 import uuid
 from dataclasses import asdict, dataclass
@@ -12,9 +13,10 @@ from typing import Any, Protocol
 from pydantic import SecretStr
 
 from app.config import Settings
+from app.log import configure_logging
 from app.openai_summary import OpenAISummaryAdapter
 from app.schema import CategorySummary, Segment, Transcript
-from app.summary import SummaryError
+from app.summary import SummaryError, SummaryExecutionContext
 from app.summary_renderer import render_summary_markdown
 
 FIXTURE_PATH = Path(__file__).parent.parent / "tests" / "fixtures" / "summary_eval.json"
@@ -24,7 +26,13 @@ class EvaluationAdapter(Protocol):
     @property
     def fingerprint(self) -> dict[str, object]: ...
 
-    def summarize(self, transcript: Transcript, category: str) -> CategorySummary: ...
+    def summarize(
+        self,
+        transcript: Transcript,
+        category: str,
+        *,
+        context: SummaryExecutionContext | None = None,
+    ) -> CategorySummary: ...
 
 
 @dataclass(frozen=True)
@@ -85,7 +93,15 @@ def evaluate_cases(
         category = str(case["category"])
         started = time.monotonic()
         try:
-            summary = adapter.summarize(transcript, category)
+            summary = adapter.summarize(
+                transcript,
+                category,
+                context=SummaryExecutionContext(
+                    logger=logging.getLogger("summary_eval"),
+                    case_id=str(case["case_id"]),
+                    input_revision=transcript.revision,
+                ),
+            )
         except SummaryError as error:
             results.append(
                 EvaluationResult(
@@ -142,6 +158,7 @@ def run(settings: Settings, *, long: bool = False) -> int:
         raise ValueError("summary evaluation requires LLM_API_KEY")
     if not settings.llm_base_url or not settings.llm_model:
         raise ValueError("summary evaluation requires LLM_BASE_URL and LLM_MODEL")
+    configure_logging("summary_eval")
     adapter = OpenAISummaryAdapter(
         base_url=settings.llm_base_url,
         api_key=settings.llm_api_key.get_secret_value(),
