@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import logging
 import urllib.error
 import urllib.request
 import uuid
@@ -360,3 +361,297 @@ def test_unknown_pydantic_error_type_is_redacted() -> None:
         {"validation_type": "unknown_type", "field_path": "unknown_field[2]"}
     ]
     assert "PRIVATE" not in json.dumps(details)
+
+
+@pytest.fixture
+def diagnostic_log() -> tuple[io.StringIO, logging.Logger]:
+    import logging
+
+    from app.log import JsonFormatter
+
+    output = io.StringIO()
+    handler = logging.StreamHandler(output)
+    handler.setFormatter(JsonFormatter("summary-test"))
+    logger = logging.Logger("summary-test", level=logging.INFO)
+    logger.addHandler(handler)
+    return output, logger
+
+
+@pytest.mark.parametrize("chunked", [False, True])
+@pytest.mark.parametrize("second", ["success", "schema", "evidence"])
+def test_each_response_logs_validation_and_correction(
+    diagnostic_log: tuple[io.StringIO, logging.Logger],
+    chunked: bool,
+    second: str,
+) -> None:
+    from app.summary import SummaryExecutionContext
+
+    output, logger = diagnostic_log
+    valid = json.dumps({"facts": [_fact(quote=None)]}) if chunked else _meeting()
+    invalid_evidence = (
+        json.dumps({"facts": [_fact(quote="PRIVATE_QUOTE")]})
+        if chunked
+        else _meeting(purpose=_fact(quote="PRIVATE_QUOTE"))
+    )
+    final = valid if second == "success" else "{}" if second == "schema" else invalid_evidence
+    responses = [_response("{}"), _response(final)]
+    if chunked and second == "success":
+        responses += [_response(valid), _response(_meeting())]
+    transport = RecordingTransport(*responses)
+    adapter = _adapter(transport, max_context_chars=20 if chunked else 120_000)
+    fingerprint = adapter.fingerprint
+    context = SummaryExecutionContext(logger, job_id="test-job", job_attempt=3, input_revision=2)
+    if second == "success":
+        adapter.summarize(_transcript(), "회의", context=context)
+    else:
+        with pytest.raises(SummaryProviderError) as raised:
+            adapter.summarize(_transcript(), "회의", context=context)
+        assert raised.value.code == "SUMMARY_INVALID_OUTPUT"
+        assert raised.value.reason == second
+        assert "PRIVATE" not in str(raised.value)
+    events = [json.loads(line) for line in output.getvalue().splitlines()]
+    assert [event["event"] for event in events[:4]] == [
+        "summary_request_started",
+        "summary_validation_failed",
+        "summary_request_started",
+        "summary_validation_succeeded" if second == "success" else "summary_validation_failed",
+    ]
+    assert [event["provider_attempt"] for event in events[:4]] == [1, 1, 2, 2]
+    assert events[1]["failure_reason"] == "schema"
+    if second != "success":
+        assert events[3]["failure_reason"] == second
+    if second == "evidence":
+        assert events[3]["validation_errors"] == [
+            {
+                "validation_type": "quote_mismatch",
+                "field_path": "facts[0].evidence[0]" if chunked else "purpose.evidence[0]",
+            }
+        ]
+    for event in events:
+        assert (event["job_id"], event["job_attempt"], event["input_revision"]) == (
+            "test-job",
+            3,
+            2,
+        )
+        assert event["template"] == "meeting"
+        assert event["elapsed_seconds"] >= 0
+    assert events[0]["phase"] == ("chunk_extraction" if chunked else "final_summary")
+    assert events[0]["segment_count"] == 1
+    if chunked:
+        assert events[0]["chunk_index"] == 0
+        assert events[0]["chunk_count"] == 2
+        if second == "success":
+            assert events[4]["chunk_index"] == 1
+            assert events[-1]["phase"] == "final_summary"
+            assert "chunk_index" not in events[-1]
+            assert events[-1]["input_chars"] == len("안건 확인") * 2
+            assert events[-1]["segment_count"] == 1
+    else:
+        assert "chunk_index" not in events[0]
+        assert "chunk_count" not in events[0]
+        assert events[0]["input_chars"] == len(_transcript().segments[0].text)
+    assert len(transport.requests) == (4 if chunked and second == "success" else 2)
+    assert fingerprint == adapter.fingerprint
+    assert "PRIVATE" not in output.getvalue()
+    assert "sk-private-value" not in output.getvalue()
+    assert _transcript().segments[0].text not in output.getvalue()
+
+
+@pytest.mark.parametrize(
+    ("chunked", "raw", "kind", "path"),
+    [
+        (False, "[]", "model_type", "$"),
+        (True, "[]", "object_required", "$"),
+        (True, '{"facts":[]}', "empty_facts", "facts"),
+        (True, '{"facts":[{}]}', "missing", "facts[0].text"),
+        (False, "PRIVATE_JSON", "invalid_json", "$"),
+    ],
+)
+def test_manual_and_schema_checks_reach_json_formatter(
+    diagnostic_log: tuple[io.StringIO, logging.Logger],
+    chunked: bool,
+    raw: str,
+    kind: str,
+    path: str,
+) -> None:
+    from app.summary import SummaryExecutionContext
+
+    output, logger = diagnostic_log
+    transport = RecordingTransport(_response(raw), _response(raw))
+    with pytest.raises(SummaryProviderError):
+        _adapter(transport, max_context_chars=5 if chunked else 120_000).summarize(
+            _transcript("PRIVATE_TRANSCRIPT"),
+            "회의",
+            context=SummaryExecutionContext(logger),
+        )
+    failures = [
+        json.loads(line)
+        for line in output.getvalue().splitlines()
+        if json.loads(line)["event"] == "summary_validation_failed"
+    ]
+    assert len(failures) == 2
+    assert failures[0]["validation_errors"][0] == {"validation_type": kind, "field_path": path}
+    assert "PRIVATE" not in output.getvalue()
+
+
+def test_sensitive_schema_errors_are_bounded_in_formatted_log(
+    diagnostic_log: tuple[io.StringIO, logging.Logger],
+) -> None:
+    from app.summary import SummaryExecutionContext
+
+    output, logger = diagnostic_log
+    raw = json.dumps({f"/private/SECRET_KEY_{i}": "SECRET_VALUE" for i in range(10)})
+    with pytest.raises(SummaryProviderError) as raised:
+        _adapter(RecordingTransport(_response(raw), _response(raw))).summarize(
+            _transcript("SECRET_TRANSCRIPT"),
+            "회의",
+            context=SummaryExecutionContext(logger),
+        )
+    events = [json.loads(line) for line in output.getvalue().splitlines()]
+    assert events[1]["error_count"] == 16
+    assert events[1]["omitted_error_count"] == 11
+    assert len(events[1]["validation_errors"]) == 5
+    assert "SECRET" not in output.getvalue() + str(raised.value)
+    assert "exception" not in output.getvalue()
+
+
+def test_transport_failure_logs_without_traceback_or_extra_retry(
+    diagnostic_log: tuple[io.StringIO, logging.Logger],
+) -> None:
+    from app.summary import SummaryExecutionContext
+
+    output, logger = diagnostic_log
+    transport = RecordingTransport(TimeoutError("PRIVATE_EXCEPTION"))
+    with pytest.raises(SummaryTimeoutError):
+        _adapter(transport).summarize(
+            _transcript(), "회의", context=SummaryExecutionContext(logger)
+        )
+    assert len(transport.requests) == 1
+    events = [json.loads(line) for line in output.getvalue().splitlines()]
+    assert [e["event"] for e in events] == ["summary_request_started", "summary_validation_failed"]
+    assert "PRIVATE_EXCEPTION" not in output.getvalue()
+    assert "exception" not in events[1]
+
+
+def test_shared_adapter_keeps_overlapping_call_contexts_separate(
+    diagnostic_log: tuple[io.StringIO, logging.Logger],
+) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    from app.summary import SummaryExecutionContext
+
+    output, logger = diagnostic_log
+    barrier = Barrier(2)
+
+    def transport(request: urllib.request.Request, timeout: float) -> bytes:
+        barrier.wait(timeout=5)
+        return _response(_meeting())
+
+    adapter = _adapter(transport)
+
+    def run(index: int) -> None:
+        adapter.summarize(
+            _transcript(),
+            "회의",
+            context=SummaryExecutionContext(
+                logger,
+                job_id=f"job-{index}",
+                job_attempt=index,
+                input_revision=2,
+            ),
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        list(executor.map(run, [1, 2]))
+    events = [json.loads(line) for line in output.getvalue().splitlines()]
+    for index in [1, 2]:
+        own = [event for event in events if event["job_id"] == f"job-{index}"]
+        assert [event["event"] for event in own] == [
+            "summary_request_started",
+            "summary_validation_succeeded",
+        ]
+        assert all(event["job_attempt"] == index for event in own)
+
+
+@pytest.mark.parametrize(
+    ("chunked", "kind"),
+    [
+        (chunked, kind)
+        for chunked in [False, True]
+        for kind in ["unknown_segment", "timestamp_mismatch", "quote_mismatch", "outside_chunk"]
+        if chunked or kind != "outside_chunk"
+    ],
+)
+@pytest.mark.parametrize("corrected", [False, True])
+def test_evidence_reason_logged_for_each_attempt(
+    diagnostic_log: tuple[io.StringIO, logging.Logger],
+    chunked: bool,
+    kind: str,
+    corrected: bool,
+) -> None:
+    from app.summary import SummaryExecutionContext
+
+    output, logger = diagnostic_log
+    transcript = _transcript("abcde")
+    transcript.segments.append(
+        Segment(
+            id=uuid.UUID("00000000-0000-0000-0000-000000000002"),
+            start_ms=1000,
+            end_ms=2000,
+            text="fghij",
+            local_speaker_id="SPEAKER_00",
+        )
+    )
+    fact = _fact(quote=None)
+    evidence = fact["evidence"][0]  # type: ignore[index]
+    if kind == "unknown_segment":
+        evidence["segment_id"] = "00000000-0000-0000-0000-000000000099"
+    elif kind == "timestamp_mismatch":
+        evidence["start_ms"] = 1
+    elif kind == "quote_mismatch":
+        evidence["quote"] = "PRIVATE_QUOTE"
+    else:
+        evidence.update(segment_id=str(transcript.segments[1].id), start_ms=1000, end_ms=2000)
+    invalid = json.dumps({"facts": [fact]}) if chunked else _meeting(purpose=fact, action_items=[])
+    valid = (
+        json.dumps({"facts": [_fact(quote=None)]})
+        if chunked
+        else _meeting(purpose=_fact(quote=None), action_items=[])
+    )
+    responses = [_response(invalid), _response(valid if corrected else invalid)]
+    if chunked and corrected:
+        second_fact = _fact(quote=None)
+        second_fact["evidence"][0].update(  # type: ignore[index]
+            segment_id=str(transcript.segments[1].id),
+            start_ms=1000,
+            end_ms=2000,
+        )
+        responses += [
+            _response(json.dumps({"facts": [second_fact]})),
+            _response(_meeting(purpose=_fact(quote=None), action_items=[])),
+        ]
+    adapter = _adapter(RecordingTransport(*responses), max_context_chars=5 if chunked else 120_000)
+    if corrected:
+        adapter.summarize(transcript, "회의", context=SummaryExecutionContext(logger))
+    else:
+        with pytest.raises(SummaryProviderError):
+            adapter.summarize(transcript, "회의", context=SummaryExecutionContext(logger))
+    failures = [
+        json.loads(line)
+        for line in output.getvalue().splitlines()
+        if json.loads(line)["event"] == "summary_validation_failed"
+    ]
+    assert len(failures) == (1 if corrected else 2)
+    assert [event["provider_attempt"] for event in failures] == ([1] if corrected else [1, 2])
+    assert all(
+        event["validation_errors"]
+        == [
+            {
+                "validation_type": kind,
+                "field_path": "facts[0].evidence[0]" if chunked else "purpose.evidence[0]",
+            }
+        ]
+        for event in failures
+    )
+    assert "PRIVATE" not in output.getvalue()

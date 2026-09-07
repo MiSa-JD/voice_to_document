@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import math
+import time
 import urllib.error
 import urllib.request
 from collections.abc import Callable
@@ -23,8 +25,11 @@ from app.schema import (
 )
 from app.summary import (
     RetryableSummaryError,
+    SummaryError,
+    SummaryExecutionContext,
     SummaryProviderError,
     SummaryTimeoutError,
+    summary_validation_details,
 )
 
 PROMPT_VERSION = "openai-grounded-summary-v2"
@@ -84,19 +89,62 @@ class OpenAISummaryAdapter:
             "max_context_chars": self.max_context_chars,
         }
 
-    def summarize(self, transcript: Transcript, category: str) -> CategorySummary:
+    def summarize(
+        self,
+        transcript: Transcript,
+        category: str,
+        *,
+        context: SummaryExecutionContext | None = None,
+    ) -> CategorySummary:
         template = summary_template_for_category(category)
+        logger = context.logger if context else logging.getLogger(__name__)
+        fields: dict[str, object] = {"template": template, "input_revision": transcript.revision}
+        if context:
+            fields.update(
+                {
+                    key: value
+                    for key, value in {
+                        "job_id": context.job_id,
+                        "job_attempt": context.job_attempt,
+                        "input_revision": context.input_revision,
+                        "case_id": context.case_id,
+                    }.items()
+                    if value is not None
+                }
+            )
         if transcript_character_count(transcript) <= self.max_context_chars:
             material: dict[str, object] = {
                 "category": category,
                 "language": transcript.language,
                 "segments": _segment_values(_transcript_slices(transcript)),
             }
+            input_chars = transcript_character_count(transcript)
+            segment_count = len(transcript.segments)
         else:
+            chunks = chunk_transcript(transcript, self.max_context_chars)
+            fields["chunk_count"] = len(chunks)
             extracted = [
-                self._extract_facts(chunk, transcript)
-                for chunk in chunk_transcript(transcript, self.max_context_chars)
+                self._extract_facts(
+                    chunk,
+                    transcript,
+                    logger=logger,
+                    fields={**fields, "chunk_index": index},
+                )
+                for index, chunk in enumerate(chunks)
             ]
+            input_chars = sum(
+                len(fact.text) + sum(len(e.quote or "") for e in fact.evidence)
+                for facts in extracted
+                for fact in facts
+            )
+            segment_count = len(
+                {
+                    evidence.segment_id
+                    for facts in extracted
+                    for fact in facts
+                    for evidence in fact.evidence
+                }
+            )
             material = {
                 "category": category,
                 "language": transcript.language,
@@ -105,12 +153,16 @@ class OpenAISummaryAdapter:
                 ],
             }
         prompt = "다음 자료를 범주별로 요약하세요.\n" + _canonical(material)
+        fields.update(phase="final_summary", input_chars=input_chars, segment_count=segment_count)
         schema = _summary_schema(template)
         for attempt in range(2):
-            raw = self._request(
+            request_fields = {**fields, "provider_attempt": attempt + 1}
+            raw, started = self._diagnostic_request(
                 prompt if attempt == 0 else CORRECTION_INSTRUCTION + "\n" + prompt,
                 schema,
                 f"{template}_summary",
+                logger,
+                request_fields,
             )
             reason = "json_decode"
             try:
@@ -121,8 +173,10 @@ class OpenAISummaryAdapter:
                 summary = cast(CategorySummary, result)
                 reason = "evidence"
                 validate_summary_evidence(summary, transcript)
+                _log_validation(logger, request_fields, started)
                 return summary
-            except (ValidationError, ValueError, TypeError):
+            except (ValidationError, ValueError, TypeError) as error:
+                _log_validation(logger, request_fields, started, reason, error)
                 if attempt:
                     raise SummaryProviderError(
                         "summary provider returned invalid output", reason=reason
@@ -130,17 +184,31 @@ class OpenAISummaryAdapter:
         raise AssertionError("unreachable")
 
     def _extract_facts(
-        self, chunk: tuple[SegmentSlice, ...], transcript: Transcript
+        self,
+        chunk: tuple[SegmentSlice, ...],
+        transcript: Transcript,
+        *,
+        logger: logging.Logger,
+        fields: dict[str, object],
     ) -> list[SummaryFact]:
         prompt = "다음 부분 자료에서 요약에 필요한 사실을 빠짐없이 추출하세요.\n" + _canonical(
             {"segments": _segment_values(chunk)}
         )
+        fields = {
+            **fields,
+            "phase": "chunk_extraction",
+            "input_chars": sum(len(item.text) for item in chunk),
+            "segment_count": len({item.segment_id for item in chunk}),
+        }
         schema = _facts_schema()
         for attempt in range(2):
-            raw = self._request(
+            request_fields = {**fields, "provider_attempt": attempt + 1}
+            raw, started = self._diagnostic_request(
                 prompt if attempt == 0 else CORRECTION_INSTRUCTION + "\n" + prompt,
                 schema,
                 "summary_evidence",
+                logger,
+                request_fields,
             )
             reason = "json_decode"
             try:
@@ -157,13 +225,32 @@ class OpenAISummaryAdapter:
                     transcript,
                     allowed_ids={item.segment_id for item in chunk},
                 )
+                _log_validation(logger, request_fields, started)
                 return facts
-            except (ValidationError, ValueError, TypeError, IndexError):
+            except (ValidationError, ValueError, TypeError, IndexError) as error:
+                _log_validation(logger, request_fields, started, reason, error, prefix="facts")
                 if attempt:
                     raise SummaryProviderError(
                         "summary provider returned invalid output", reason=reason
                     ) from None
         raise AssertionError("unreachable")
+
+    def _diagnostic_request(
+        self,
+        prompt: str,
+        schema: dict[str, object],
+        name: str,
+        logger: logging.Logger,
+        fields: dict[str, object],
+    ) -> tuple[str, float]:
+        started = time.monotonic()
+        logger.info("summary_request_started", extra={**fields, "elapsed_seconds": 0.0})
+        try:
+            return self._request(prompt, schema, name), started
+        except SummaryError as error:
+            # Transport/envelope errors retain their original retry policy.
+            _log_validation(logger, fields, started, error.reason, error)
+            raise
 
     def _request(self, prompt: str, schema: dict[str, object], name: str) -> str:
         body = _canonical(
@@ -210,6 +297,23 @@ class OpenAISummaryAdapter:
                 "summary provider returned invalid output", reason="response_format"
             ) from None
         return _output_text(response)
+
+
+def _log_validation(
+    logger: logging.Logger,
+    fields: dict[str, object],
+    started: float,
+    reason: str | None = None,
+    error: Exception | None = None,
+    *,
+    prefix: str | None = None,
+) -> None:
+    extra = {**fields, "elapsed_seconds": round(time.monotonic() - started, 3)}
+    if error is not None:
+        extra.update(failure_reason=reason, **summary_validation_details(error, prefix=prefix))
+        logger.warning("summary_validation_failed", extra=extra)
+    else:
+        logger.info("summary_validation_succeeded", extra=extra)
 
 
 def _urlopen(request: urllib.request.Request, timeout: float) -> bytes:

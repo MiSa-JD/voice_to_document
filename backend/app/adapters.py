@@ -15,6 +15,7 @@ from app.schema import (
     summary_template_for_category,
     validate_summary_evidence,
 )
+from app.summary import SummaryExecutionContext
 
 
 class FakeFixtureNotFoundError(ValueError):
@@ -80,7 +81,13 @@ class FakeAdapters:
     def fingerprint(self) -> dict[str, object]:
         return {"provider": "fake", "model": "fixture-summary-v2"}
 
-    def summarize(self, transcript: Transcript, category: str) -> CategorySummary:
+    def summarize(
+        self,
+        transcript: Transcript,
+        category: str,
+        *,
+        context: SummaryExecutionContext | None = None,
+    ) -> CategorySummary:
         value = self._expected(transcript.content_sha256).get("summary")
         template = summary_template_for_category(category)
         if not isinstance(value, dict) or value.get("template") != template:

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
+from dataclasses import dataclass
 from typing import Protocol
 
 from pydantic import ValidationError
@@ -14,11 +16,26 @@ from app.schema import (
 )
 
 
+@dataclass(frozen=True)
+class SummaryExecutionContext:
+    logger: logging.Logger
+    job_id: str | None = None
+    job_attempt: int | None = None
+    input_revision: int | None = None
+    case_id: str | None = None
+
+
 class SummaryAdapter(Protocol):
     @property
     def fingerprint(self) -> dict[str, object]: ...
 
-    def summarize(self, transcript: Transcript, category: str) -> CategorySummary: ...
+    def summarize(
+        self,
+        transcript: Transcript,
+        category: str,
+        *,
+        context: SummaryExecutionContext | None = None,
+    ) -> CategorySummary: ...
 
 
 class SummaryError(RuntimeError):

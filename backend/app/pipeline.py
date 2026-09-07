@@ -49,6 +49,7 @@ from app.summary import (
     RetryableSummaryError,
     SummaryAdapter,
     SummaryError,
+    SummaryExecutionContext,
     summary_settings_fingerprint,
 )
 from app.summary_renderer import render_summary_markdown
@@ -344,7 +345,16 @@ class FakePipelineHandler:
         ):
             return
         transcript = self._load_transcript(job.recording_id, revision)
-        summary = self.summary_adapter.summarize(transcript, category)
+        summary = self.summary_adapter.summarize(
+            transcript,
+            category,
+            context=SummaryExecutionContext(
+                logger=self.logger,
+                job_id=job.id,
+                job_attempt=job.attempts,
+                input_revision=transcript.revision,
+            ),
+        )
         slug = safe_category_slug(category)
         metadata = {
             "schema_version": 1,
