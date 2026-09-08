@@ -40,8 +40,6 @@ def _fact(text: str = "안건 확인", *, quote: str | None = "안건을 확인"
         "evidence": [
             {
                 "segment_id": "00000000-0000-0000-0000-000000000001",
-                "start_ms": 0,
-                "end_ms": 1_000,
                 "quote": quote,
             }
         ],
@@ -282,6 +280,7 @@ def test_evidence_diagnostics_use_response_paths(field: str, value: object, kind
     from app.schema import SummaryFact, SummaryValidationError, validate_fact_evidence
 
     raw = _fact()
+    raw["evidence"][0].update(start_ms=0, end_ms=1000)  # type: ignore[index]
     raw["evidence"][0][field] = value  # type: ignore[index]
     fact = SummaryFact.model_validate(raw)
     with pytest.raises(SummaryValidationError) as raised:
@@ -294,9 +293,11 @@ def test_evidence_diagnostics_use_response_paths(field: str, value: object, kind
 def test_chunk_membership_has_fixed_diagnostic() -> None:
     from app.schema import SummaryFact, SummaryValidationError, validate_fact_evidence
 
+    raw = _fact()
+    raw["evidence"][0].update(start_ms=0, end_ms=1000)  # type: ignore[index]
     with pytest.raises(SummaryValidationError) as raised:
         validate_fact_evidence(
-            [("facts[0]", SummaryFact.model_validate(_fact()))], _transcript(), allowed_ids=set()
+            [("facts[0]", SummaryFact.model_validate(raw))], _transcript(), allowed_ids=set()
         )
     assert raised.value.validation_type == "outside_chunk"
     assert raised.value.field_path == "facts[0].evidence[0]"
@@ -579,7 +580,7 @@ def test_shared_adapter_keeps_overlapping_call_contexts_separate(
     [
         (chunked, kind)
         for chunked in [False, True]
-        for kind in ["unknown_segment", "timestamp_mismatch", "quote_mismatch", "outside_chunk"]
+        for kind in ["unknown_segment", "quote_mismatch", "outside_chunk"]
         if chunked or kind != "outside_chunk"
     ],
 )
@@ -607,12 +608,10 @@ def test_evidence_reason_logged_for_each_attempt(
     evidence = fact["evidence"][0]  # type: ignore[index]
     if kind == "unknown_segment":
         evidence["segment_id"] = "00000000-0000-0000-0000-000000000099"
-    elif kind == "timestamp_mismatch":
-        evidence["start_ms"] = 1
     elif kind == "quote_mismatch":
         evidence["quote"] = "PRIVATE_QUOTE"
     else:
-        evidence.update(segment_id=str(transcript.segments[1].id), start_ms=1000, end_ms=2000)
+        evidence.update(segment_id=str(transcript.segments[1].id))
     invalid = json.dumps({"facts": [fact]}) if chunked else _meeting(purpose=fact, action_items=[])
     valid = (
         json.dumps({"facts": [_fact(quote=None)]})
@@ -624,8 +623,6 @@ def test_evidence_reason_logged_for_each_attempt(
         second_fact = _fact(quote=None)
         second_fact["evidence"][0].update(  # type: ignore[index]
             segment_id=str(transcript.segments[1].id),
-            start_ms=1000,
-            end_ms=2000,
         )
         responses += [
             _response(json.dumps({"facts": [second_fact]})),
@@ -655,3 +652,128 @@ def test_evidence_reason_logged_for_each_attempt(
         for event in failures
     )
     assert "PRIVATE" not in output.getvalue()
+
+
+@pytest.mark.parametrize("category", ["강의", "회의", "일상 대화", "게임 목록", "기타"])
+def test_all_template_evidence_uses_original_times(category: str) -> None:
+    from app.openai_summary import _summary_schema
+    from app.schema import summary_template_for_category, validate_summary_evidence
+
+    transcript = _transcript()
+    transcript.segments.append(
+        Segment(
+            id=uuid.UUID("abcdefab-0000-0000-0000-000000000002"),
+            start_ms=4321,
+            end_ms=9876,
+            text="공개 두 번째 문장",
+            local_speaker_id="SPEAKER_00",
+        )
+    )
+    before = transcript.model_dump_json()
+    template = summary_template_for_category(category)
+    schema = _summary_schema(template)
+    properties = schema["properties"]
+    assert isinstance(properties, dict)
+    evidence = [
+        {"segment_id": str(segment.id).upper(), "quote": segment.text}
+        for segment in transcript.segments
+    ]
+    payload: dict[str, object] = {"template": template}
+    for name, definition in properties.items():
+        if name == "template":
+            continue
+        fact = (
+            {"task": "공개 할 일", "assignee": None, "due_date": None, "evidence": evidence}
+            if name == "action_items"
+            else {"text": "공개 사실", "evidence": evidence}
+        )
+        payload[name] = [fact] if definition["type"] == "array" else fact
+    transport = RecordingTransport(_response(json.dumps(payload)))
+    result = _adapter(transport).summarize(transcript, category)
+    validate_summary_evidence(result, transcript)
+    for name, field in result.model_dump(mode="json").items():
+        if name == "template":
+            continue
+        for fact in field if isinstance(field, list) else [field]:
+            assert [(e["start_ms"], e["end_ms"]) for e in fact["evidence"]] == [
+                (0, 1000),
+                (4321, 9876),
+            ]
+    assert transcript.model_dump_json() == before
+    assert "start_ms" not in json.dumps(schema)
+    assert "end_ms" not in json.dumps(schema)
+
+
+@pytest.mark.parametrize("chunked", [False, True])
+@pytest.mark.parametrize(
+    ("reference", "kind", "suffix"),
+    [
+        ({"quote": None}, "missing", ".segment_id"),
+        ({"segment_id": None}, "uuid_type", ".segment_id"),
+        ({"segment_id": "PRIVATE_UUID"}, "uuid_parsing", ".segment_id"),
+        ({"segment_id": str(uuid.UUID(int=1)), "start_ms": 0}, "extra_forbidden", ".start_ms"),
+        ({"segment_id": str(uuid.UUID(int=1)), "end_ms": 1000}, "extra_forbidden", ".end_ms"),
+        (
+            {"segment_id": str(uuid.UUID(int=1)), "PRIVATE_KEY": "PRIVATE_VALUE"},
+            "extra_forbidden",
+            ".unknown_field",
+        ),
+        ({"segment_id": str(uuid.UUID(int=1)), "quote": 123}, "string_type", ".quote"),
+    ],
+)
+def test_reference_schema_errors_keep_safe_response_paths(
+    diagnostic_log: tuple[io.StringIO, logging.Logger],
+    chunked: bool,
+    reference: dict[str, object],
+    kind: str,
+    suffix: str,
+) -> None:
+    from app.summary import SummaryExecutionContext
+
+    output, logger = diagnostic_log
+    fact = {"text": "공개 사실", "evidence": [reference]}
+    raw = json.dumps({"facts": [fact]}) if chunked else _meeting(purpose=fact)
+    transport = RecordingTransport(_response(raw), _response(raw))
+    with pytest.raises(SummaryProviderError) as raised:
+        _adapter(transport, max_context_chars=5 if chunked else 120_000).summarize(
+            _transcript(), "회의", context=SummaryExecutionContext(logger)
+        )
+    assert raised.value.reason == "schema"
+    events = [json.loads(line) for line in output.getvalue().splitlines()]
+    path = ("facts[0]" if chunked else "purpose") + ".evidence[0]" + suffix
+    assert events[1]["validation_errors"] == [{"validation_type": kind, "field_path": path}]
+    assert events[3]["validation_errors"] == events[1]["validation_errors"]
+    assert len(transport.requests) == 2
+    assert "PRIVATE" not in output.getvalue()
+
+
+@pytest.mark.parametrize("end_ms", [1000, 999])
+def test_final_evidence_still_rejects_equal_and_reversed_times(end_ms: int) -> None:
+    from app.schema import Evidence
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError) as raised:
+        Evidence(segment_id=uuid.UUID(int=1), start_ms=1000, end_ms=end_ms)
+    assert raised.value.errors()[0]["type"] == "value_error"
+
+
+def test_split_segment_keeps_original_times_and_quote_policy() -> None:
+    transcript = _transcript("abcdefghij")
+    transcript.segments[0].start_ms = 4321
+    transcript.segments[0].end_ms = 9876
+    # Existing policy checks the original segment, including text in another slice.
+    facts = json.dumps({"facts": [_fact(quote="fghij")]})
+    transport = RecordingTransport(
+        _response(facts),
+        _response(facts),
+        _response(_meeting(purpose=_fact(quote="abcdefghij"), action_items=[])),
+    )
+    result = _adapter(transport, max_context_chars=5).summarize(transcript, "회의")
+    assert isinstance(result, MeetingSummary)
+    assert (result.purpose.evidence[0].start_ms, result.purpose.evidence[0].end_ms) == (4321, 9876)
+    final_request = transport.requests[-1][0]
+    assert isinstance(final_request.data, bytes)
+    material = json.loads(json.loads(final_request.data)["input"].split("\n")[-1])
+    assert len(material["evidence_from_all_chunks"]) == 2
+    assert "start_ms" not in json.dumps(material)
+    assert "end_ms" not in json.dumps(material)

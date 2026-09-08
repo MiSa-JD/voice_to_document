@@ -13,7 +13,6 @@ from app.summary_eval import evaluate_cases, load_cases, long_meeting_case
 
 def _fact(case: dict[str, Any]) -> dict[str, object]:
     case_id = str(case["case_id"])
-    segments = list(case["segments"])
     indexes = list(case["required_evidence_segments"])
     terms = [item[0] if isinstance(item, list) else item for item in case["required_terms"]]
     return {
@@ -23,8 +22,6 @@ def _fact(case: dict[str, Any]) -> dict[str, object]:
                 "segment_id": str(
                     uuid.uuid5(uuid.NAMESPACE_URL, f"summary-eval:{case_id}:{index}")
                 ),
-                "start_ms": int(segments[int(index)]["start_ms"]),
-                "end_ms": int(segments[int(index)]["end_ms"]),
                 "quote": None,
             }
             for index in indexes
@@ -149,3 +146,15 @@ def test_long_meeting_preserves_beginning_middle_end_and_rejects_omissions() -> 
     result = evaluate_cases(adapter, [case])[0]
     assert not result.passed
     assert result.failure_reason == "schema"
+
+
+def test_evaluation_requires_reference_contract_fingerprint() -> None:
+    from app.summary_eval import _valid_fingerprint
+
+    adapter = OpenAISummaryAdapter(base_url="https://example.invalid", api_key="", model="test")
+    assert _valid_fingerprint(adapter.fingerprint)
+    assert adapter.fingerprint["schema_version"] == adapter.fingerprint["template_version"] == 1
+    assert not _valid_fingerprint(
+        {**adapter.fingerprint, "prompt_version": "openai-grounded-summary-v2"}
+    )
+    assert not _valid_fingerprint({**adapter.fingerprint, "evidence_time_strategy": "other"})

@@ -275,8 +275,10 @@ def _valid_fingerprint(value: dict[str, object]) -> bool:
     required = {
         "provider": "openai_compatible",
         "temperature": 0,
-        "prompt_version": "openai-grounded-summary-v2",
+        "prompt_version": "openai-grounded-summary-v3",
         "schema_version": 1,
+        "provider_schema_version": 2,
+        "evidence_time_strategy": "source-segment-time-v1",
         "template_version": 1,
         "context_strategy": "full-or-all-chunk-evidence-v1",
     }
