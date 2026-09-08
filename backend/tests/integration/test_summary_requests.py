@@ -438,3 +438,170 @@ def test_worker_diagnostics_link_actual_job_revision_and_result(
     if not succeeds:
         assert row["error_code"] == "SUMMARY_INVALID_OUTPUT"
         assert "PRIVATE" not in row["error_message"]
+
+
+def test_real_api_worker_fingerprint_and_timestamp_artifacts(
+    settings_values: dict[str, Any],
+) -> None:
+    from app.openai_summary import OpenAISummaryAdapter
+    from app.summary import configured_summary_settings_fingerprint, summary_settings_fingerprint
+
+    settings, _, recording_id = _manual_summary_recording(settings_values)
+    settings = settings.model_copy(update={"document_mode": "real", "llm_model": "test"})
+    client = TestClient(create_app(settings))
+
+    def transport(request: urllib.request.Request, timeout: float) -> bytes:
+        assert isinstance(request.data, bytes)
+        material = json.loads(json.loads(request.data)["input"].split("\n")[-1])
+        fact = {
+            "text": "공개 사실",
+            "evidence": [{"segment_id": material["segments"][0]["segment_id"], "quote": None}],
+        }
+        value = {
+            "template": "meeting",
+            "purpose": fact,
+            "discussion": [],
+            "decisions": [],
+            "action_items": [],
+            "open_questions": [],
+        }
+        return json.dumps(
+            {"output": [{"content": [{"type": "output_text", "text": json.dumps(value)}]}]}
+        ).encode()
+
+    adapter = OpenAISummaryAdapter(
+        base_url="https://example.invalid",
+        api_key="",
+        model="test",
+        transport=transport,
+        max_context_chars=settings.summary_context_max_chars,
+    )
+    expected = summary_settings_fingerprint(adapter, "회의")
+    # main c346b02, model=test, default context: provider v2 contract.
+    assert expected != "27d7111a75cb7c456c4257db1ea32633035a2d0aca21aa52fafc5a6d54346b15"
+    assert configured_summary_settings_fingerprint(settings, "회의") == expected
+    created = client.post(f"/api/recordings/{recording_id}/summary", json={"expected_revision": 1})
+    assert created.status_code == 202
+    with connect(settings.database_path) as connection:
+        row = connection.execute(
+            "SELECT settings_fingerprint FROM jobs WHERE id = ?", (created.json()["job_id"],)
+        ).fetchone()
+        assert row[0] == expected
+    handler = FakePipelineHandler(settings, logging.getLogger("test"), summary_adapter=adapter)
+    assert process_one_job(settings.database_path, handler, logging.getLogger("test"))
+    detail = client.get(f"/api/recordings/{recording_id}").json()
+    assert detail["summary_status"] == "succeeded"
+    evidence = detail["summary"]["purpose"]["evidence"][0]
+    segment = next(s for s in detail["segments"] if s["id"] == evidence["segment_id"])
+    assert (evidence["start_ms"], evidence["end_ms"]) == (segment["start_ms"], segment["end_ms"])
+    with connect(settings.database_path) as connection:
+        rows = connection.execute(
+            "SELECT kind, relative_path FROM artifacts "
+            "WHERE recording_id = ? AND kind LIKE 'summary_%'",
+            (recording_id,),
+        ).fetchall()
+    assert {row["kind"] for row in rows} == {"summary_json", "summary_markdown"}
+    for row in rows:
+        text = (settings.summary_root / row["relative_path"]).read_text()
+        if row["kind"] == "summary_json":
+            payload = json.loads(text)
+            assert payload["schema_version"] == 1
+            assert payload["summary"]["purpose"]["evidence"][0] == evidence
+            assert payload["summary_fingerprint"] == adapter.fingerprint
+        else:
+            assert "공개 사실" in text
+            from app.renderer import format_timestamp
+
+            assert (
+                f"{format_timestamp(evidence['start_ms'])}–{format_timestamp(evidence['end_ms'])}"
+                in text
+            )
+
+
+@pytest.mark.parametrize("completed", [False, True])
+def test_fingerprint_upgrade_preserves_existing_job_and_artifact_behavior(
+    settings_values: dict[str, Any],
+    completed: bool,
+) -> None:
+    from app.openai_summary import OpenAISummaryAdapter
+
+    settings, old_client, recording_id = _manual_summary_recording(settings_values)
+    first = old_client.post(
+        f"/api/recordings/{recording_id}/summary", json={"expected_revision": 1}
+    )
+    logger = logging.getLogger("test")
+    if completed:
+        assert process_one_job(
+            settings.database_path, FakePipelineHandler(settings, logger), logger
+        )
+    with connect(settings.database_path) as connection:
+        before = [
+            dict(row)
+            for row in connection.execute(
+                "SELECT * FROM artifacts WHERE recording_id = ?", (recording_id,)
+            )
+        ]
+    with connect(settings.database_path) as connection:
+        # Public baseline fingerprint from main c346b02, model=test.
+        connection.execute(
+            "UPDATE jobs SET settings_fingerprint = ? WHERE id = ?",
+            (
+                "27d7111a75cb7c456c4257db1ea32633035a2d0aca21aa52fafc5a6d54346b15",
+                first.json()["job_id"],
+            ),
+        )
+    settings = settings.model_copy(update={"document_mode": "real", "llm_model": "test"})
+    client = TestClient(create_app(settings))
+    adapter = OpenAISummaryAdapter(base_url="https://example.invalid", api_key="", model="test")
+    if not completed:
+        blocked = client.post(
+            f"/api/recordings/{recording_id}/summary", json={"expected_revision": 1}
+        )
+        assert blocked.status_code == 422
+        assert blocked.json()["error"]["code"] == "SUMMARY_IN_PROGRESS"
+        # Existing behavior: obsolete fingerprints return without calling the provider.
+        assert process_one_job(
+            settings.database_path,
+            FakePipelineHandler(settings, logger, summary_adapter=adapter),
+            logger,
+        )
+    detail = client.get(f"/api/recordings/{recording_id}").json()
+    assert detail["summary_status"] == ("succeeded" if completed else "failed")
+    assert (detail["summary"] is not None) is completed
+    with connect(settings.database_path) as connection:
+        assert (
+            connection.execute(
+                "SELECT status FROM jobs WHERE id = ?", (first.json()["job_id"],)
+            ).fetchone()[0]
+            == "succeeded"
+        )
+        assert [
+            dict(row)
+            for row in connection.execute(
+                "SELECT * FROM artifacts WHERE recording_id = ?", (recording_id,)
+            )
+        ] == before
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM jobs WHERE recording_id = ? AND kind = 'summarize'",
+                (recording_id,),
+            ).fetchone()[0]
+            == 1
+        )
+    if completed:
+        # A changed fingerprint alone neither marks an existing artifact stale nor queues a job.
+        new = client.post(f"/api/recordings/{recording_id}/summary", json={"expected_revision": 1})
+        assert new.status_code == 202
+        assert new.json()["job_id"] != first.json()["job_id"]
+        duplicate = client.post(
+            f"/api/recordings/{recording_id}/summary", json={"expected_revision": 1}
+        )
+        assert duplicate.status_code == 200
+        assert duplicate.json()["job_id"] == new.json()["job_id"]
+    else:
+        # The old skipped job leaves the recording SUMMARIZING: drain before upgrading.
+        retry = client.post(
+            f"/api/recordings/{recording_id}/summary", json={"expected_revision": 1}
+        )
+        assert retry.status_code == 422
+        assert retry.json()["error"]["code"] == "SUMMARY_NOT_READY"
