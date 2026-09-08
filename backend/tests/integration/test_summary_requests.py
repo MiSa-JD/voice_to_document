@@ -361,8 +361,6 @@ def test_worker_diagnostics_link_actual_job_revision_and_result(
             "evidence": [
                 {
                     "segment_id": segment["segment_id"],
-                    "start_ms": segment["start_ms"],
-                    "end_ms": segment["end_ms"],
                     "quote": None,
                 }
             ],
