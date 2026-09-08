@@ -12,7 +12,6 @@ from app.schema import NonEmptyText, StrictModel, SummaryValidationError, Transc
 
 class EvidenceReference(StrictModel):
     segment_id: UUID
-    quote: NonEmptyText | None = None
 
 
 class ReferenceFact(StrictModel):
@@ -96,6 +95,6 @@ def resolve_evidence_references(value: StrictModel, transcript: Transcript) -> d
                         "unknown_segment", f"{path}.evidence[{evidence_index}]"
                     )
                 target["evidence"][evidence_index].update(
-                    start_ms=segment.start_ms, end_ms=segment.end_ms
+                    start_ms=segment.start_ms, end_ms=segment.end_ms, quote=segment.text
                 )
     return result

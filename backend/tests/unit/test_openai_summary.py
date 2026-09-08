@@ -34,13 +34,13 @@ def _transcript(text: str = "안건을 확인했고 민수가 금요일까지 �
     )
 
 
-def _fact(text: str = "안건 확인", *, quote: str | None = "안건을 확인") -> dict[str, object]:
+def _fact(text: str = "안건 확인", **reference_fields: object) -> dict[str, object]:
     return {
         "text": text,
         "evidence": [
             {
                 "segment_id": "00000000-0000-0000-0000-000000000001",
-                "quote": quote,
+                **reference_fields,
             }
         ],
     }
@@ -185,12 +185,12 @@ def test_timeout_is_retryable_and_errors_do_not_expose_private_values() -> None:
 
 
 def test_long_transcript_extracts_every_chunk_before_final_summary() -> None:
-    first = json.dumps({"facts": [_fact("첫 부분", quote="abcde")]}, ensure_ascii=False)
-    second = json.dumps({"facts": [_fact("둘째 부분", quote="fghij")]}, ensure_ascii=False)
+    first = json.dumps({"facts": [_fact("첫 부분")]}, ensure_ascii=False)
+    second = json.dumps({"facts": [_fact("둘째 부분")]}, ensure_ascii=False)
     transport = RecordingTransport(
         _response(first),
         _response(second),
-        _response(_meeting(purpose=_fact("전체 목적", quote=None), action_items=[])),
+        _response(_meeting(purpose=_fact("전체 목적"), action_items=[])),
     )
 
     result = _adapter(transport, max_context_chars=5).summarize(_transcript("abcdefghij"), "회의")
@@ -228,7 +228,7 @@ def test_second_invalid_output_fails_without_provider_body_or_key() -> None:
         (_response("private-response"), "json_decode", 2),
         (_response("{}"), "schema", 2),
         (_response("[]"), "schema", 2),
-        (_response(_meeting(purpose=_fact(quote="private-response"))), "evidence", 2),
+        (_response(_meeting(purpose=_fact(quote="private-response"))), "schema", 2),
     ],
 )
 def test_safe_output_failure_reasons(response: bytes, reason: str, calls: int) -> None:
@@ -247,7 +247,7 @@ def test_safe_output_failure_reasons(response: bytes, reason: str, calls: int) -
         ("private-response", "json_decode"),
         ("[]", "schema"),
         ('{"facts": []}', "schema"),
-        (json.dumps({"facts": [_fact(quote="private-response")]}), "evidence"),
+        (json.dumps({"facts": [_fact(quote="private-response")]}), "schema"),
     ],
 )
 def test_chunk_failure_reasons(raw: str, reason: str) -> None:
@@ -388,11 +388,11 @@ def test_each_response_logs_validation_and_correction(
     from app.summary import SummaryExecutionContext
 
     output, logger = diagnostic_log
-    valid = json.dumps({"facts": [_fact(quote=None)]}) if chunked else _meeting()
+    valid = json.dumps({"facts": [_fact()]}) if chunked else _meeting()
     invalid_evidence = (
-        json.dumps({"facts": [_fact(quote="PRIVATE_QUOTE")]})
+        json.dumps({"facts": [_fact(segment_id="00000000-0000-0000-0000-000000000099")]})
         if chunked
-        else _meeting(purpose=_fact(quote="PRIVATE_QUOTE"))
+        else _meeting(purpose=_fact(segment_id="00000000-0000-0000-0000-000000000099"))
     )
     final = valid if second == "success" else "{}" if second == "schema" else invalid_evidence
     responses = [_response("{}"), _response(final)]
@@ -424,7 +424,7 @@ def test_each_response_logs_validation_and_correction(
     if second == "evidence":
         assert events[3]["validation_errors"] == [
             {
-                "validation_type": "quote_mismatch",
+                "validation_type": "unknown_segment",
                 "field_path": "facts[0].evidence[0]" if chunked else "purpose.evidence[0]",
             }
         ]
@@ -580,7 +580,7 @@ def test_shared_adapter_keeps_overlapping_call_contexts_separate(
     [
         (chunked, kind)
         for chunked in [False, True]
-        for kind in ["unknown_segment", "quote_mismatch", "outside_chunk"]
+        for kind in ["unknown_segment", "outside_chunk"]
         if chunked or kind != "outside_chunk"
     ],
 )
@@ -604,29 +604,25 @@ def test_evidence_reason_logged_for_each_attempt(
             local_speaker_id="SPEAKER_00",
         )
     )
-    fact = _fact(quote=None)
+    fact = _fact()
     evidence = fact["evidence"][0]  # type: ignore[index]
     if kind == "unknown_segment":
         evidence["segment_id"] = "00000000-0000-0000-0000-000000000099"
-    elif kind == "quote_mismatch":
-        evidence["quote"] = "PRIVATE_QUOTE"
     else:
         evidence.update(segment_id=str(transcript.segments[1].id))
     invalid = json.dumps({"facts": [fact]}) if chunked else _meeting(purpose=fact, action_items=[])
     valid = (
-        json.dumps({"facts": [_fact(quote=None)]})
-        if chunked
-        else _meeting(purpose=_fact(quote=None), action_items=[])
+        json.dumps({"facts": [_fact()]}) if chunked else _meeting(purpose=_fact(), action_items=[])
     )
     responses = [_response(invalid), _response(valid if corrected else invalid)]
     if chunked and corrected:
-        second_fact = _fact(quote=None)
+        second_fact = _fact()
         second_fact["evidence"][0].update(  # type: ignore[index]
             segment_id=str(transcript.segments[1].id),
         )
         responses += [
             _response(json.dumps({"facts": [second_fact]})),
-            _response(_meeting(purpose=_fact(quote=None), action_items=[])),
+            _response(_meeting(purpose=_fact(), action_items=[])),
         ]
     adapter = _adapter(RecordingTransport(*responses), max_context_chars=5 if chunked else 120_000)
     if corrected:
@@ -655,7 +651,7 @@ def test_evidence_reason_logged_for_each_attempt(
 
 
 @pytest.mark.parametrize("category", ["강의", "회의", "일상 대화", "게임 목록", "기타"])
-def test_all_template_evidence_uses_original_times(category: str) -> None:
+def test_all_template_evidence_uses_original_text_and_times(category: str) -> None:
     from app.openai_summary import _summary_schema
     from app.schema import summary_template_for_category, validate_summary_evidence
 
@@ -674,10 +670,7 @@ def test_all_template_evidence_uses_original_times(category: str) -> None:
     schema = _summary_schema(template)
     properties = schema["properties"]
     assert isinstance(properties, dict)
-    evidence = [
-        {"segment_id": str(segment.id).upper(), "quote": segment.text}
-        for segment in transcript.segments
-    ]
+    evidence = [{"segment_id": str(segment.id).upper()} for segment in transcript.segments]
     payload: dict[str, object] = {"template": template}
     for name, definition in properties.items():
         if name == "template":
@@ -699,16 +692,20 @@ def test_all_template_evidence_uses_original_times(category: str) -> None:
                 (0, 1000),
                 (4321, 9876),
             ]
+            assert [e["quote"] for e in fact["evidence"]] == [
+                segment.text for segment in transcript.segments
+            ]
     assert transcript.model_dump_json() == before
     assert "start_ms" not in json.dumps(schema)
     assert "end_ms" not in json.dumps(schema)
+    assert "quote" not in json.dumps(schema)
 
 
 @pytest.mark.parametrize("chunked", [False, True])
 @pytest.mark.parametrize(
     ("reference", "kind", "suffix"),
     [
-        ({"quote": None}, "missing", ".segment_id"),
+        ({}, "missing", ".segment_id"),
         ({"segment_id": None}, "uuid_type", ".segment_id"),
         ({"segment_id": "PRIVATE_UUID"}, "uuid_parsing", ".segment_id"),
         ({"segment_id": str(uuid.UUID(int=1)), "start_ms": 0}, "extra_forbidden", ".start_ms"),
@@ -718,7 +715,14 @@ def test_all_template_evidence_uses_original_times(category: str) -> None:
             "extra_forbidden",
             ".unknown_field",
         ),
-        ({"segment_id": str(uuid.UUID(int=1)), "quote": 123}, "string_type", ".quote"),
+        *[
+            (
+                {"segment_id": str(uuid.UUID(int=1)), "quote": quote},
+                "extra_forbidden",
+                ".quote",
+            )
+            for quote in [None, "안건을 확인", "PRIVATE_QUOTE", 123]
+        ],
     ],
 )
 def test_reference_schema_errors_keep_safe_response_paths(
@@ -761,12 +765,12 @@ def test_split_segment_keeps_original_times_and_quote_policy() -> None:
     transcript = _transcript("abcdefghij")
     transcript.segments[0].start_ms = 4321
     transcript.segments[0].end_ms = 9876
-    # Existing policy checks the original segment, including text in another slice.
-    facts = json.dumps({"facts": [_fact(quote="fghij")]})
+    # Each slice resolves to the whole original segment, never a partial quote.
+    facts = json.dumps({"facts": [_fact()]})
     transport = RecordingTransport(
         _response(facts),
         _response(facts),
-        _response(_meeting(purpose=_fact(quote="abcdefghij"), action_items=[])),
+        _response(_meeting(purpose=_fact(), action_items=[])),
     )
     result = _adapter(transport, max_context_chars=5).summarize(transcript, "회의")
     assert isinstance(result, MeetingSummary)
@@ -777,3 +781,87 @@ def test_split_segment_keeps_original_times_and_quote_policy() -> None:
     assert len(material["evidence_from_all_chunks"]) == 2
     assert "start_ms" not in json.dumps(material)
     assert "end_ms" not in json.dumps(material)
+    assert "quote" not in json.dumps(material)
+    assert result.purpose.evidence[0].quote == transcript.segments[0].text
+    assert all(
+        fact["evidence"] == [{"segment_id": str(transcript.segments[0].id)}]
+        for facts in material["evidence_from_all_chunks"]
+        for fact in facts
+    )
+
+
+@pytest.mark.parametrize("chunked", [False, True])
+@pytest.mark.parametrize("quote", [None, "안건을 확인", "안건을 검토했습니다."])
+def test_provider_quote_is_rejected_then_id_only_correction_succeeds(
+    diagnostic_log: tuple[io.StringIO, logging.Logger], chunked: bool, quote: str | None
+) -> None:
+    from app.summary import SummaryExecutionContext
+
+    output, logger = diagnostic_log
+    invalid = _fact(quote=quote)
+    raw = json.dumps({"facts": [invalid]}) if chunked else _meeting(purpose=invalid)
+    valid = json.dumps({"facts": [_fact()]}) if chunked else _meeting()
+    responses = [_response(raw), _response(valid)]
+    if chunked:
+        responses += [_response(valid), _response(_meeting())]
+    transport = RecordingTransport(*responses)
+    transcript = _transcript()
+    result = _adapter(transport, max_context_chars=20 if chunked else 120_000).summarize(
+        transcript, "회의", context=SummaryExecutionContext(logger)
+    )
+    assert isinstance(result, MeetingSummary)
+    assert result.purpose.evidence[0].quote == transcript.segments[0].text
+    events = [json.loads(line) for line in output.getvalue().splitlines()]
+    assert events[1]["failure_reason"] == "schema"
+    assert events[1]["validation_errors"] == [
+        {
+            "validation_type": "extra_forbidden",
+            "field_path": "facts[0].evidence[0].quote" if chunked else "purpose.evidence[0].quote",
+        }
+    ]
+    assert events[3]["event"] == "summary_validation_succeeded"
+    assert len(transport.requests) == (4 if chunked else 2)
+
+
+def test_original_quote_mismatch_reproduction_and_resolver_preserves_inputs() -> None:
+    from app.schema import SummaryFact, SummaryValidationError, validate_fact_evidence
+    from app.summary_references import ReferenceFacts, resolve_evidence_references
+
+    transcript = _transcript("공개 안건을 확인했습니다. 다음 주에 다시 논의합니다.")
+    legacy = SummaryFact.model_validate(
+        _fact(quote="공개 안건을 검토했습니다.", start_ms=0, end_ms=1000)
+    )
+    with pytest.raises(SummaryValidationError) as raised:
+        validate_fact_evidence([("facts[0]", legacy)], transcript)
+    assert raised.value.validation_type == "quote_mismatch"
+    references = ReferenceFacts.model_validate({"facts": [_fact()]})
+    before_references = references.model_dump_json()
+    before_transcript = transcript.model_dump_json()
+    resolved = resolve_evidence_references(references, transcript)
+    fact = SummaryFact.model_validate(resolved["facts"][0])  # type: ignore[index]
+    validate_fact_evidence([("facts[0]", fact)], transcript)
+    assert fact.evidence[0].quote == transcript.segments[0].text
+    assert references.model_dump_json() == before_references
+    assert transcript.model_dump_json() == before_transcript
+
+
+@pytest.mark.parametrize("chunked", [False, True])
+@pytest.mark.parametrize("evidence", [[], None, {}, [None], ["PRIVATE_VALUE"]])
+def test_provider_rejects_empty_or_mistyped_evidence(chunked: bool, evidence: object) -> None:
+    fact = {"text": "공개 사실", "evidence": evidence}
+    raw = json.dumps({"facts": [fact]}) if chunked else _meeting(purpose=fact)
+    with pytest.raises(SummaryProviderError) as raised:
+        _adapter(
+            RecordingTransport(_response(raw), _response(raw)),
+            max_context_chars=5 if chunked else 120_000,
+        ).summarize(_transcript(), "회의")
+    assert raised.value.reason == "schema"
+
+
+def test_provider_rejects_wrong_category() -> None:
+    raw = _meeting(template="other")
+    with pytest.raises(SummaryProviderError) as raised:
+        _adapter(RecordingTransport(_response(raw), _response(raw))).summarize(
+            _transcript(), "회의"
+        )
+    assert raised.value.reason == "schema"
