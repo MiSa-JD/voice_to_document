@@ -22,7 +22,6 @@ def _fact(case: dict[str, Any]) -> dict[str, object]:
                 "segment_id": str(
                     uuid.uuid5(uuid.NAMESPACE_URL, f"summary-eval:{case_id}:{index}")
                 ),
-                "quote": None,
             }
             for index in indexes
         ],
@@ -155,6 +154,49 @@ def test_evaluation_requires_reference_contract_fingerprint() -> None:
     assert _valid_fingerprint(adapter.fingerprint)
     assert adapter.fingerprint["schema_version"] == adapter.fingerprint["template_version"] == 1
     assert not _valid_fingerprint(
-        {**adapter.fingerprint, "prompt_version": "openai-grounded-summary-v2"}
+        {**adapter.fingerprint, "prompt_version": "openai-grounded-summary-v3"}
     )
     assert not _valid_fingerprint({**adapter.fingerprint, "evidence_time_strategy": "other"})
+
+
+@pytest.mark.parametrize("key", ["provider_schema_version", "evidence_quote_strategy"])
+def test_evaluation_rejects_missing_or_old_quote_contract(key: str) -> None:
+    from app.summary_eval import _valid_fingerprint
+
+    adapter = OpenAISummaryAdapter(base_url="https://example.invalid", api_key="", model="test")
+    fingerprint = adapter.fingerprint
+    fingerprint.pop(key)
+    assert not _valid_fingerprint(fingerprint)
+    fingerprint[key] = 2 if key == "provider_schema_version" else "other"
+    assert not _valid_fingerprint(fingerprint)
+
+
+def test_fingerprint_hashes_match_actual_prompt_and_all_provider_schemas() -> None:
+    import hashlib
+
+    from app.openai_summary import SYSTEM_INSTRUCTION, _summary_schema
+
+    adapter = OpenAISummaryAdapter(base_url="https://example.invalid", api_key="", model="test")
+    fingerprint = adapter.fingerprint
+    schemas = {
+        name: _summary_schema(name)
+        for name in ["lecture", "meeting", "daily_conversation", "game_list", "other"]
+    }
+    assert fingerprint["prompt_version"] == "openai-grounded-summary-v4"
+    assert fingerprint["provider_schema_version"] == 3
+    assert fingerprint["evidence_quote_strategy"] == "source-segment-text-v1"
+    assert fingerprint["prompt_sha256"] == hashlib.sha256(SYSTEM_INSTRUCTION.encode()).hexdigest()
+    assert (
+        fingerprint["schema_sha256"]
+        == hashlib.sha256(
+            json.dumps(schemas, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+    )
+    assert (
+        fingerprint["prompt_sha256"]
+        != "a44f43f17480f110db1a998879f2f100c8a3e412c4d8be1a438f90101daae3ec"
+    )
+    assert (
+        fingerprint["schema_sha256"]
+        != "b1252d5aaf885c2149732be347bdeff3ab168eedd5e54ed2ba959247c64f2772"
+    )

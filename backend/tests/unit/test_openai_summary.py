@@ -552,16 +552,20 @@ def test_shared_adapter_keeps_overlapping_call_contexts_separate(
     adapter = _adapter(transport)
 
     def run(index: int) -> None:
-        adapter.summarize(
-            _transcript(),
+        transcript = _transcript(f"공개 revision {index} 원문")
+        transcript.revision = index
+        result = adapter.summarize(
+            transcript,
             "회의",
             context=SummaryExecutionContext(
                 logger,
                 job_id=f"job-{index}",
                 job_attempt=index,
-                input_revision=2,
+                input_revision=index,
             ),
         )
+        assert isinstance(result, MeetingSummary)
+        assert result.purpose.evidence[0].quote == transcript.segments[0].text
 
     with ThreadPoolExecutor(max_workers=2) as executor:
         list(executor.map(run, [1, 2]))
@@ -573,6 +577,7 @@ def test_shared_adapter_keeps_overlapping_call_contexts_separate(
             "summary_validation_succeeded",
         ]
         assert all(event["job_attempt"] == index for event in own)
+        assert all(event["input_revision"] == index for event in own)
 
 
 @pytest.mark.parametrize(
