@@ -361,7 +361,6 @@ def test_worker_diagnostics_link_actual_job_revision_and_result(
             "evidence": [
                 {
                     "segment_id": segment["segment_id"],
-                    "quote": None,
                 }
             ],
         }
@@ -440,8 +439,10 @@ def test_worker_diagnostics_link_actual_job_revision_and_result(
         assert "PRIVATE" not in row["error_message"]
 
 
-def test_real_api_worker_fingerprint_and_timestamp_artifacts(
+@pytest.mark.parametrize("source_text", ["공개 원본 문장입니다.", "공개 장문 근거입니다. " * 2000])
+def test_real_api_worker_fingerprint_and_source_quote_artifacts(
     settings_values: dict[str, Any],
+    source_text: str,
 ) -> None:
     from app.openai_summary import OpenAISummaryAdapter
     from app.summary import configured_summary_settings_fingerprint, summary_settings_fingerprint
@@ -449,13 +450,18 @@ def test_real_api_worker_fingerprint_and_timestamp_artifacts(
     settings, _, recording_id = _manual_summary_recording(settings_values)
     settings = settings.model_copy(update={"document_mode": "real", "llm_model": "test"})
     client = TestClient(create_app(settings))
+    fixture_handler = FakePipelineHandler(settings, logging.getLogger("test"))
+    transcript = fixture_handler._load_transcript(recording_id, 1)
+    transcript.segments[0].text = source_text.strip()
+    fixture_handler._replace_segments(transcript)
+    fixture_handler._write_transcript_json(transcript)
 
     def transport(request: urllib.request.Request, timeout: float) -> bytes:
         assert isinstance(request.data, bytes)
         material = json.loads(json.loads(request.data)["input"].split("\n")[-1])
         fact = {
             "text": "공개 사실",
-            "evidence": [{"segment_id": material["segments"][0]["segment_id"], "quote": None}],
+            "evidence": [{"segment_id": material["segments"][0]["segment_id"]}],
         }
         value = {
             "template": "meeting",
@@ -477,8 +483,8 @@ def test_real_api_worker_fingerprint_and_timestamp_artifacts(
         max_context_chars=settings.summary_context_max_chars,
     )
     expected = summary_settings_fingerprint(adapter, "회의")
-    # main c346b02, model=test, default context: provider v2 contract.
-    assert expected != "27d7111a75cb7c456c4257db1ea32633035a2d0aca21aa52fafc5a6d54346b15"
+    # main 0a33cb9, model=test, default context: prompt v3 / provider schema 2 contract.
+    assert expected != "e24e909393f3f12fd1448d5e46bdc00899cca366aa1992056c6d96b134fadcaf"
     assert configured_summary_settings_fingerprint(settings, "회의") == expected
     created = client.post(f"/api/recordings/{recording_id}/summary", json={"expected_revision": 1})
     assert created.status_code == 202
@@ -494,6 +500,7 @@ def test_real_api_worker_fingerprint_and_timestamp_artifacts(
     evidence = detail["summary"]["purpose"]["evidence"][0]
     segment = next(s for s in detail["segments"] if s["id"] == evidence["segment_id"])
     assert (evidence["start_ms"], evidence["end_ms"]) == (segment["start_ms"], segment["end_ms"])
+    assert evidence["quote"] == segment["text"] == source_text.strip()
     with connect(settings.database_path) as connection:
         rows = connection.execute(
             "SELECT kind, relative_path FROM artifacts "
@@ -506,6 +513,7 @@ def test_real_api_worker_fingerprint_and_timestamp_artifacts(
         if row["kind"] == "summary_json":
             payload = json.loads(text)
             assert payload["schema_version"] == 1
+            assert payload["revision"] == transcript.revision
             assert payload["summary"]["purpose"]["evidence"][0] == evidence
             assert payload["summary_fingerprint"] == adapter.fingerprint
         else:
@@ -541,12 +549,36 @@ def test_fingerprint_upgrade_preserves_existing_job_and_artifact_behavior(
                 "SELECT * FROM artifacts WHERE recording_id = ?", (recording_id,)
             )
         ]
+    legacy_bytes: dict[Path, bytes] = {}
+    if completed:
+        for artifact in before:
+            if artifact["kind"] not in {"summary_json", "summary_markdown"}:
+                continue
+            path = settings.summary_root / artifact["relative_path"]
+            if artifact["kind"] == "summary_json":
+                payload = json.loads(path.read_text())
+                evidence = payload["summary"]["purpose"]["evidence"][0]
+                source_segments = old_client.get(f"/api/recordings/{recording_id}").json()[
+                    "segments"
+                ]
+                evidence["quote"] = next(
+                    segment["text"][:2]
+                    for segment in source_segments
+                    if segment["id"] == evidence["segment_id"]
+                )
+                payload["summary"]["purpose"]["evidence"].append({**evidence, "quote": None})
+                payload["summary_fingerprint"] = {
+                    "provider": "openai_compatible",
+                    "prompt_version": "openai-grounded-summary-v3",
+                }
+                path.write_text(json.dumps(payload, ensure_ascii=False))
+            legacy_bytes[path] = path.read_bytes()
     with connect(settings.database_path) as connection:
-        # Public baseline fingerprint from main c346b02, model=test.
+        # Public baseline fingerprint from main 0a33cb9, model=test.
         connection.execute(
             "UPDATE jobs SET settings_fingerprint = ? WHERE id = ?",
             (
-                "27d7111a75cb7c456c4257db1ea32633035a2d0aca21aa52fafc5a6d54346b15",
+                "e24e909393f3f12fd1448d5e46bdc00899cca366aa1992056c6d96b134fadcaf",
                 first.json()["job_id"],
             ),
         )
@@ -588,7 +620,11 @@ def test_fingerprint_upgrade_preserves_existing_job_and_artifact_behavior(
             ).fetchone()[0]
             == 1
         )
+    assert all(path.read_bytes() == content for path, content in legacy_bytes.items())
     if completed:
+        quotes = [e["quote"] for e in detail["summary"]["purpose"]["evidence"]]
+        assert len(quotes[0]) == 2
+        assert quotes[1] is None
         # A changed fingerprint alone neither marks an existing artifact stale nor queues a job.
         new = client.post(f"/api/recordings/{recording_id}/summary", json={"expected_revision": 1})
         assert new.status_code == 202
