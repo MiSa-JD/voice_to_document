@@ -15,6 +15,7 @@ from app.openai_summary import OpenAISummaryAdapter
 from app.pipeline import FakePipelineHandler
 from app.real_pipeline import RealSpeechPipelineHandler
 from app.reconciliation import reconcile_markdown_artifacts, reconcile_summary_artifacts
+from app.recovery import RecoveryError, recover_stale_jobs, worker_lock
 from app.runtime import JobHandler, discover_once, process_one_job
 
 
@@ -36,6 +37,17 @@ def run(settings: Settings | None = None, handler: JobHandler | None = None) -> 
     signal.signal(signal.SIGTERM, request_stop)
     signal.signal(signal.SIGINT, request_stop)
 
+    try:
+        with worker_lock(config.database_path):
+            return _run_locked(config, handler, logger, stop)
+    except RecoveryError as error:
+        logger.error("worker_start_failed", extra={"error_code": error.code})
+        return 1
+
+
+def _run_locked(
+    config: Settings, handler: JobHandler | None, logger: logging.Logger, stop: threading.Event
+) -> int:
     migrate_database(config.database_path)
     reconcile_markdown_artifacts(
         config.database_path,
@@ -51,6 +63,8 @@ def run(settings: Settings | None = None, handler: JobHandler | None = None) -> 
     )
     tracker = StabilityTracker(config.file_stable_seconds)
     job_handler = handler or build_handler(config, logger)
+    if isinstance(job_handler, FakePipelineHandler):
+        recover_stale_jobs(job_handler, logger)
     logger.info("worker_started", extra={"stage": "readiness"})
     while not stop.is_set():
         discover_once(config, tracker, logger)
@@ -120,7 +134,7 @@ def main() -> None:
     try:
         raise SystemExit(run())
     except Exception:
-        logging.getLogger("worker").exception("worker_start_failed")
+        logging.getLogger("worker").error("worker_start_failed")
         raise
 
 

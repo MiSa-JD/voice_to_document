@@ -140,6 +140,8 @@ class RealSpeechPipelineHandler(FakePipelineHandler):
         if job.kind != "transcribe":
             super().__call__(job)
             return
+        if self._resume_recovered(job):
+            return
         try:
             self._transcribe_real(job)
         except AudioNormalizationError as error:

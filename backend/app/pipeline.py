@@ -27,6 +27,13 @@ from app.long_transcript import (
     TopicEvidence,
     TranscriptIdentity,
 )
+from app.recovery import (
+    RecoveryError,
+    apply_completion,
+    artifact_bytes,
+    inspect_recovery,
+    recovery_requested,
+)
 from app.renderer import (
     MARKDOWN_SCHEMA_VERSION,
     render_transcript_json,
@@ -128,6 +135,8 @@ class FakePipelineHandler:
             }
 
     def __call__(self, job: Job) -> None:
+        if self._resume_recovered(job):
+            return
         if job.kind == "summarize":
             try:
                 self._summarize(job)
@@ -242,6 +251,61 @@ class FakePipelineHandler:
             self._mark_failed(job.recording_id, "PIPELINE_ERROR", "처리 단계가 실패했습니다.")
             raise
 
+    def _resume_recovered(self, job: Job) -> bool:
+        if not recovery_requested(self.settings.database_path, job.id):
+            return False
+        try:
+            with connect(self.settings.database_path) as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                plan = inspect_recovery(connection, self, job)
+                if plan.action == "complete":
+                    apply_completion(connection, job, plan)
+                    return True
+            if plan.action == "resume" and plan.transcript is not None:
+                if job.kind == "transcribe":
+                    recording = self._recording(job.recording_id)
+                    self._generate_speaker_clips(
+                        job.recording_id, Path(str(recording["source_path"])), plan.revision
+                    )
+                    self._enqueue_speaker_finalization(plan.transcript)
+                    return True
+                if job.kind == "classify":
+                    self._write_classified_transcript_artifacts(plan.transcript)
+                    self._finish_classification(job, plan.transcript)
+                    return True
+                if job.kind == "summarize":
+                    from pydantic import TypeAdapter
+
+                    from app.schema import CategorySummary
+
+                    with connect(self.settings.database_path) as connection:
+                        data = artifact_bytes(
+                            connection,
+                            self.settings.summary_root,
+                            job.recording_id,
+                            "summary_json",
+                            plan.revision,
+                        )
+                    assert data is not None
+                    payload = json.loads(data)
+                    summary: CategorySummary = TypeAdapter(CategorySummary).validate_python(
+                        payload["summary"]
+                    )
+                    write_summary_artifacts(
+                        self.settings.database_path,
+                        self.settings.summary_root,
+                        job.recording_id,
+                        plan.revision,
+                        safe_category_slug(payload["category"]),
+                        data,
+                        render_summary_markdown(summary, payload["category"]),
+                    )
+                    self._enter(job.recording_id, RecordingStatus.COMPLETED)
+                    return True
+            return False
+        except RecoveryError as error:
+            raise PermanentJobError(error.code, "작업 복구 조건을 확인해 주세요.") from None
+
     def _transcribe(self, job: Job) -> None:
         recording = self._recording(job.recording_id)
         retranscription = request_for_job(self.settings.database_path, job.id)
@@ -290,6 +354,12 @@ class FakePipelineHandler:
             source,
         )
         self._write_classified_transcript_artifacts(classified)
+        self._finish_classification(job, classified)
+
+    def _finish_classification(self, job: Job, transcript: Transcript) -> None:
+        applied = transcript.classification
+        if applied is None:
+            raise ValueError("classification is missing")
         with connect(self.settings.database_path) as connection:
             had_summary = (
                 connection.execute(
