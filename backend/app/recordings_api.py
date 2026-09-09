@@ -65,11 +65,20 @@ class RecordingItem(BaseModel):
     updated_at: str
 
 
+class OperationsOverview(BaseModel):
+    queued_jobs: int
+    running_jobs: int
+    review_recordings: int
+    failed_recordings: int
+    last_job_finished_at: str | None
+
+
 class RecordingListResponse(BaseModel):
     items: list[RecordingItem]
     total: int
     page_size: int = PAGE_SIZE
     status_counts: dict[RecordingStatus, int]
+    operations: OperationsOverview
 
 
 class SegmentResponse(BaseModel):
@@ -244,6 +253,7 @@ def create_recordings_router(settings: Settings) -> APIRouter:
             parameters.append(category)
         where = " WHERE " + " AND ".join(clauses) if clauses else ""
         with connect(settings.database_path) as connection:
+            connection.execute("BEGIN")
             rows = connection.execute(
                 f"""
                 SELECT id, original_name, duration_ms, status, category,
@@ -264,12 +274,23 @@ def create_recordings_router(settings: Settings) -> APIRouter:
             count_rows = connection.execute(
                 "SELECT status, COUNT(*) AS count FROM recordings GROUP BY status"
             ).fetchall()
+            job_counts = connection.execute(
+                "SELECT COALESCE(SUM(status = 'queued'), 0) AS queued_jobs, "
+                "COALESCE(SUM(status = 'running'), 0) AS running_jobs, "
+                "MAX(CASE WHEN status IN ('succeeded', 'failed') THEN updated_at END) "
+                "AS last_job_finished_at FROM jobs"
+            ).fetchone()
+            recording_counts = connection.execute(
+                "SELECT COALESCE(SUM(needs_speaker_review = 1), 0) AS review_recordings, "
+                "COALESCE(SUM(status = 'FAILED'), 0) AS failed_recordings FROM recordings"
+            ).fetchone()
         counts = {value: 0 for value in RecordingStatus}
         counts.update({RecordingStatus(row["status"]): int(row["count"]) for row in count_rows})
         return RecordingListResponse(
             items=[_recording_item(dict(row)) for row in rows],
             total=total,
             status_counts=counts,
+            operations=OperationsOverview(**dict(job_counts), **dict(recording_counts)),
         )
 
     @router.post(

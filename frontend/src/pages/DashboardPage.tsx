@@ -3,7 +3,6 @@ import { Link } from 'react-router-dom';
 
 import { ApiError } from '../api/client';
 import {
-  ACTIVE_STATUSES,
   getRecordings,
   type RecordingListResponse,
   type RecordingStatus,
@@ -27,7 +26,10 @@ export function DashboardPage() {
         const data = await getRecordings(controller.signal);
         if (controller.signal.aborted) return;
         setState({ kind: 'success', data });
-        if (data.items.some((item) => ACTIVE_STATUSES.has(item.status))) {
+        if (
+          data.operations.queued_jobs > 0 ||
+          data.operations.running_jobs > 0
+        ) {
           timer = window.setTimeout(load, 3000);
         }
       } catch (error) {
@@ -78,10 +80,47 @@ export function DashboardPage() {
 
       {state.kind === 'success' && (
         <>
+          <section className="panel" aria-label="전체 운영 현황">
+            <h2>전체 운영 현황</h2>
+            <div className="status-grid">
+              <article className="stat-card">
+                <strong>{state.data.operations.queued_jobs}개 작업</strong>
+                <span>대기 중 · 자동 재시도 대기 포함</span>
+              </article>
+              <article className="stat-card">
+                <strong>{state.data.operations.running_jobs}개 작업</strong>
+                <span>실행 중</span>
+              </article>
+              <article className="stat-card">
+                <strong>
+                  {state.data.operations.review_recordings}개 녹음
+                </strong>
+                <span>화자 검토 필요</span>
+              </article>
+              <article className="stat-card">
+                <strong>
+                  {state.data.operations.failed_recordings}개 녹음
+                </strong>
+                <span>처리 실패</span>
+              </article>
+            </div>
+            <p>
+              최근 처리 시각:{' '}
+              {state.data.operations.last_job_finished_at ? (
+                <time dateTime={state.data.operations.last_job_finished_at}>
+                  {new Date(
+                    state.data.operations.last_job_finished_at,
+                  ).toLocaleString()}
+                </time>
+              ) : (
+                '아직 처리 이력이 없습니다.'
+              )}
+            </p>
+          </section>
           <section className="status-grid" aria-label="상태별 녹음 수">
             {Object.entries(state.data.status_counts).map(([status, count]) => (
               <article className="stat-card" key={status}>
-                <strong>{count}</strong>
+                <strong>{count}개 녹음</strong>
                 <span>{statusLabel(status as RecordingStatus)}</span>
               </article>
             ))}

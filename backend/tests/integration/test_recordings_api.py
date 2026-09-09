@@ -36,6 +36,13 @@ def test_empty_recording_list(settings_values: dict[str, Any]) -> None:
     assert response.status_code == 200
     assert response.json()["items"] == []
     assert response.json()["total"] == 0
+    assert response.json()["operations"] == {
+        "queued_jobs": 0,
+        "running_jobs": 0,
+        "review_recordings": 0,
+        "failed_recordings": 0,
+        "last_job_finished_at": None,
+    }
     assert all(count == 0 for count in response.json()["status_counts"].values())
 
 
@@ -285,3 +292,52 @@ def test_category_update_rolls_back_when_audit_insert_fails(
         ).fetchone()[0]
     assert dict(recording) == {"category": "회의", "category_source": "auto", "revision": 1}
     assert render_count == 0
+
+
+def test_operations_counts_all_rows_not_recent_list(settings_values: dict[str, Any]) -> None:
+    from app.repository import register_recording
+
+    settings = Settings(**settings_values)
+    source = settings.recording_input_dir / "test.m4a"
+    source.write_bytes(b"audio")
+    ids = [
+        register_recording(settings.database_path, source, f"{index:064x}", 5, 1000).recording_id
+        for index in range(51)
+    ]
+    with connect(settings.database_path) as connection:
+        connection.execute(
+            "UPDATE recordings SET status = 'COMPLETED', created_at = '2026-09-09T00:00:00+00:00'"
+        )
+        connection.execute(
+            "UPDATE jobs SET status = 'succeeded', updated_at = '2026-09-01T00:00:00+00:00'"
+        )
+        connection.execute(
+            "UPDATE recordings SET status = 'FAILED', needs_speaker_review = 1, "
+            "created_at = '2020-01-01T00:00:00+00:00' WHERE id = ?",
+            (ids[0],),
+        )
+        connection.execute(
+            "UPDATE jobs SET status = 'queued', available_at = '2099-01-01T00:00:00+00:00', "
+            "updated_at = '2099-01-01T00:00:00+00:00' WHERE recording_id = ?",
+            (ids[0],),
+        )
+        connection.execute("UPDATE jobs SET status = 'running' WHERE recording_id = ?", (ids[1],))
+        connection.execute(
+            "UPDATE jobs SET status = 'failed', updated_at = '2026-09-02T00:00:00+00:00' "
+            "WHERE recording_id = ?",
+            (ids[2],),
+        )
+    client = TestClient(create_app(settings))
+    response = client.get("/api/recordings")
+    payload = response.json()
+    assert len(payload["items"]) == 50 and payload["total"] == 51
+    assert ids[0] not in {item["id"] for item in payload["items"]}
+    expected = dict(
+        queued_jobs=1,
+        running_jobs=1,
+        review_recordings=1,
+        failed_recordings=1,
+        last_job_finished_at="2026-09-02T00:00:00+00:00",
+    )
+    assert payload["operations"] == expected
+    assert client.get("/api/recordings?status=FAILED").json()["operations"] == expected

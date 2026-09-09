@@ -1,9 +1,17 @@
-import { render, screen } from '@testing-library/react';
+import { act, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { vi } from 'vitest';
 
 import { DashboardPage } from '../src/pages/DashboardPage';
+
+const operations = {
+  queued_jobs: 0,
+  running_jobs: 0,
+  review_recordings: 0,
+  failed_recordings: 0,
+  last_job_finished_at: null,
+};
 
 const counts = {
   DISCOVERED: 0,
@@ -31,6 +39,7 @@ test('빈 녹음 목록을 오류와 구분해 표시한다', async () => {
         items: [],
         total: 0,
         page_size: 50,
+        operations,
         status_counts: counts,
       }),
     ),
@@ -72,6 +81,7 @@ test('완료 녹음과 상태를 표시한다', async () => {
         ],
         total: 1,
         page_size: 50,
+        operations,
         status_counts: { ...counts, COMPLETED: 1 },
       }),
     ),
@@ -105,6 +115,7 @@ test('API 실패 후 다시 불러온다', async () => {
         items: [],
         total: 0,
         page_size: 50,
+        operations,
         status_counts: counts,
       }),
     );
@@ -123,4 +134,59 @@ test('API 실패 후 다시 불러온다', async () => {
     await screen.findByText('아직 감지된 녹음이 없습니다'),
   ).toBeInTheDocument();
   expect(fetchMock).toHaveBeenCalledTimes(2);
+});
+
+test('목록 밖 활성 작업의 전체 집계를 표시하고 polling을 계속한다', async () => {
+  vi.useFakeTimers();
+  const finishedAt = '2026-09-09T06:00:00+00:00';
+  const payload = {
+    items: [],
+    total: 51,
+    page_size: 50,
+    status_counts: counts,
+    operations: {
+      ...operations,
+      queued_jobs: 2,
+      running_jobs: 1,
+      review_recordings: 3,
+      failed_recordings: 4,
+      last_job_finished_at: finishedAt,
+    },
+  };
+  const fetchMock = vi
+    .fn()
+    .mockImplementation(() => Promise.resolve(response(200, payload)));
+  vi.stubGlobal('fetch', fetchMock);
+  try {
+    await act(async () => {
+      render(
+        <MemoryRouter>
+          <DashboardPage />
+        </MemoryRouter>,
+      );
+    });
+    expect(screen.getByText('2개 작업')).toBeInTheDocument();
+    expect(screen.getByText('1개 작업')).toBeInTheDocument();
+    expect(screen.getByText('3개 녹음')).toBeInTheDocument();
+    expect(screen.getByText('4개 녹음')).toBeInTheDocument();
+    expect(
+      screen.getByText(new Date(finishedAt).toLocaleString()),
+    ).toHaveAttribute('dateTime', finishedAt);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    payload.operations.queued_jobs = 0;
+    payload.operations.running_jobs = 0;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(6000);
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  } finally {
+    vi.useRealTimers();
+  }
 });

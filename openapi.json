@@ -681,6 +681,46 @@
         "title": "MeetingSummary",
         "type": "object"
       },
+      "OperationsOverview": {
+        "properties": {
+          "failed_recordings": {
+            "title": "Failed Recordings",
+            "type": "integer"
+          },
+          "last_job_finished_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Job Finished At"
+          },
+          "queued_jobs": {
+            "title": "Queued Jobs",
+            "type": "integer"
+          },
+          "review_recordings": {
+            "title": "Review Recordings",
+            "type": "integer"
+          },
+          "running_jobs": {
+            "title": "Running Jobs",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "queued_jobs",
+          "running_jobs",
+          "review_recordings",
+          "failed_recordings",
+          "last_job_finished_at"
+        ],
+        "title": "OperationsOverview",
+        "type": "object"
+      },
       "OtherSummary": {
         "additionalProperties": false,
         "properties": {
@@ -1091,6 +1131,9 @@
             "title": "Items",
             "type": "array"
           },
+          "operations": {
+            "$ref": "#/components/schemas/OperationsOverview"
+          },
           "page_size": {
             "default": 50,
             "title": "Page Size",
@@ -1114,7 +1157,8 @@
         "required": [
           "items",
           "total",
-          "status_counts"
+          "status_counts",
+          "operations"
         ],
         "title": "RecordingListResponse",
         "type": "object"

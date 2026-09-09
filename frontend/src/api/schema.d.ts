@@ -505,6 +505,19 @@ export interface components {
              */
             template: "meeting";
         };
+        /** OperationsOverview */
+        OperationsOverview: {
+            /** Failed Recordings */
+            failed_recordings: number;
+            /** Last Job Finished At */
+            last_job_finished_at: string | null;
+            /** Queued Jobs */
+            queued_jobs: number;
+            /** Review Recordings */
+            review_recordings: number;
+            /** Running Jobs */
+            running_jobs: number;
+        };
         /** OtherSummary */
         OtherSummary: {
             /** Follow Ups */
@@ -626,6 +639,7 @@ export interface components {
         RecordingListResponse: {
             /** Items */
             items: components["schemas"]["RecordingItem"][];
+            operations: components["schemas"]["OperationsOverview"];
             /**
              * Page Size
              * @default 50
