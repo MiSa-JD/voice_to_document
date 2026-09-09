@@ -8,6 +8,7 @@ import {
   getLatestRetranscription,
   getRecording,
   requestRecordingSummary,
+  retryRecordingJob,
   statusLabel,
   updateRecordingCategory,
   type RecordingDetailResponse,
@@ -35,7 +36,10 @@ export function RecordingDetailPage() {
         if (
           ACTIVE_STATUSES.has(data.recording.status) ||
           data.summary_status === 'queued' ||
-          data.summary_status === 'running'
+          data.summary_status === 'running' ||
+          data.jobs.some(
+            (job) => job.status === 'queued' || job.status === 'running',
+          )
         ) {
           timer = window.setTimeout(load, 3000);
         }
@@ -147,43 +151,137 @@ function RecordingDetail({
         )}
       </section>
 
-      <section className="panel detail-section">
+      <section id="summary-section" className="panel detail-section">
         <h2>요약</h2>
         <SummaryStatusPanel data={data} onReload={onReload} />
       </section>
 
-      <section className="panel detail-section">
-        <h2>처리 이력</h2>
-        <ul className="job-list">
-          {data.jobs.map((job) => {
-            const retryPending = job.status === 'queued' && job.error_code;
-            const failureStatus =
-              job.status === 'failed' && job.error_code
-                ? job.attempts >= 3
-                  ? '자동 재시도 종료'
-                  : '사용자 조치 필요'
-                : job.status;
-            return (
-              <li key={job.id}>
-                <div className="job-summary">
-                  <strong>{job.kind}</strong>
-                  <span>
-                    {retryPending ? '자동 재시도 대기' : failureStatus}
-                  </span>
-                  <small>{job.attempts}회 시도</small>
-                </div>
-                {job.error_code && job.error_message && (
-                  <p className="job-error" role="status">
-                    <code>{job.error_code}</code>
-                    <span>{job.error_message}</span>
-                  </p>
-                )}
-              </li>
-            );
-          })}
-        </ul>
-      </section>
+      <JobHistory data={data} onReload={onReload} />
     </>
+  );
+}
+
+const JOB_STAGE_LABELS: Record<string, string> = {
+  transcribe: '전사',
+  finalize_speakers: '화자 처리',
+  classify: '분류',
+  summarize: '요약',
+  render: '문서 반영',
+};
+const JOB_STATUS_LABELS: Record<string, string> = {
+  queued: '처리 대기',
+  running: '실행 중',
+  failed: '실패',
+  succeeded: '완료',
+};
+const FAILURE_LABELS = {
+  transient: '일시 오류',
+  action_required: '사용자·설정 조치 필요',
+  invalid_output: '유효하지 않은 출력',
+  internal: '내부 오류',
+};
+
+function JobHistory({
+  data,
+  onReload,
+}: {
+  data: RecordingDetailResponse;
+  onReload: () => void;
+}) {
+  const [submitting, setSubmitting] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  const retry = async (jobId: string) => {
+    if (submitting) return;
+    setSubmitting(jobId);
+    setMessage(null);
+    try {
+      const result = await retryRecordingJob(
+        data.recording.id,
+        jobId,
+        data.recording.revision,
+      );
+      setMessage(
+        result.created
+          ? '재시도 작업을 등록했습니다.'
+          : '이미 등록된 재시도 작업을 확인했습니다.',
+      );
+      onReload();
+    } catch (error) {
+      setMessage(
+        error instanceof ApiError && error.status === 409
+          ? '입력 또는 작업 상태가 변경되었습니다. 최신 내용을 확인한 뒤 다시 시도해 주세요.'
+          : error instanceof ApiError
+            ? error.message
+            : '재시도 요청을 보내지 못했습니다. 연결을 확인해 주세요.',
+      );
+      if (error instanceof ApiError && error.status === 409) onReload();
+    } finally {
+      setSubmitting(null);
+    }
+  };
+  return (
+    <section className="panel detail-section">
+      <h2>처리 이력</h2>
+      {message && <p role="status">{message}</p>}
+      {data.jobs.length === 0 && (
+        <p className="muted">아직 처리 이력이 없습니다.</p>
+      )}
+      <ul className="job-list">
+        {data.jobs.map((job) => (
+          <li key={job.id}>
+            <div className="job-summary">
+              <strong>{JOB_STAGE_LABELS[job.kind] ?? job.kind}</strong>
+              <span>
+                {job.automatic_retry === 'scheduled'
+                  ? '자동 재시도 대기'
+                  : (JOB_STATUS_LABELS[job.status] ?? job.status)}
+              </span>
+              <small>{job.attempts}회 시도</small>
+            </div>
+            {job.failure_category && (
+              <p>{FAILURE_LABELS[job.failure_category]}</p>
+            )}
+            {job.error_code && (
+              <p className="job-error" role="status">
+                <code>{job.error_code}</code>
+                <span>{job.failure_description ?? job.error_message}</span>
+              </p>
+            )}
+            {job.automatic_retry === 'exhausted' && (
+              <p>자동 재시도 한도를 소진했습니다.</p>
+            )}
+            {job.automatic_retry === 'stopped' && (
+              <p>자동 재시도가 중단되었습니다.</p>
+            )}
+            {job.next_run_at && (
+              <p>
+                다음 실행 가능 시각:{' '}
+                <time dateTime={job.next_run_at}>
+                  {new Date(job.next_run_at).toLocaleString()}
+                </time>
+              </p>
+            )}
+            {job.recovery_description && <p>{job.recovery_description}</p>}
+            {job.recovery_action === 'retry' && (
+              <button
+                type="button"
+                disabled={submitting !== null}
+                onClick={() => void retry(job.id)}
+                aria-label={`${JOB_STAGE_LABELS[job.kind] ?? job.kind} 작업 다시 시도`}
+              >
+                {submitting === job.id ? '요청 중…' : '작업 다시 시도'}
+              </button>
+            )}
+            {job.recovery_action === 'request_summary' && (
+              <a href="#summary-section">요약 다시 요청으로 이동</a>
+            )}
+            {job.recovery_action === 'retranscribe' && (
+              <a href="#retranscription-section">STT 재수행으로 이동</a>
+            )}
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }
 
@@ -398,7 +496,10 @@ function RetranscriptionPanel({
 
   const active = latest?.status === 'queued' || latest?.status === 'running';
   return (
-    <section className="panel detail-section retranscription-panel">
+    <section
+      id="retranscription-section"
+      className="panel detail-section retranscription-panel"
+    >
       <div className="section-heading">
         <div>
           <h2>STT 다시 수행</h2>

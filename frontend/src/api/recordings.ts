@@ -161,3 +161,22 @@ export function getLatestRetranscription(
     { signal },
   );
 }
+
+export function retryRecordingJob(
+  id: string,
+  jobId: string,
+  expectedRevision: number,
+) {
+  return requestJson<components['schemas']['JobRetryResponse']>(
+    `/api/recordings/${encodeURIComponent(id)}/retry`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        job_id: jobId,
+        expected_revision: expectedRevision,
+      }),
+    },
+    [202],
+  );
+}

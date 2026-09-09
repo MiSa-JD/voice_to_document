@@ -71,3 +71,5 @@ test "$(sha256sum "$markdown_path" | awk '{print $1}')" = "$markdown_digest"
 
 # Uses separate temporary DB and artifacts inside the container.
 docker compose exec -T worker python backend/tests/recovery_probe.py
+
+E2E_RETRY_SCENARIO=1 npm --prefix frontend run test:e2e -- --grep "실패한 문서 작업"
