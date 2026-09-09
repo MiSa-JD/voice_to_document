@@ -418,6 +418,7 @@ class FakePipelineHandler:
             "summary_failed",
             extra={
                 "stage": "summarize",
+                "recording_id": job.recording_id,
                 "job_id": job.id,
                 "attempt": job.attempts,
                 "failure_reason": reason,
@@ -683,7 +684,7 @@ class FakePipelineHandler:
                 revision,
             )
         except Exception:
-            self.logger.exception(
+            self.logger.error(
                 "speaker_clip_generation_failed",
                 extra={
                     "recording_id": recording_id,
@@ -853,7 +854,7 @@ class FakePipelineHandler:
                 message,
             )
         except (KeyError, ValueError):
-            self.logger.exception(
+            self.logger.error(
                 "recording_failure_state_error",
                 extra={"recording_id": recording_id, "error_code": code},
             )

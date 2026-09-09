@@ -4,6 +4,7 @@ import logging
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from time import monotonic
 
 from app.config import Settings
 from app.discovery import StabilityTracker
@@ -73,6 +74,14 @@ def process_one_job(
     if stop_requested():
         release_job(database_path, job.id)
         return False
+    started = monotonic()
+    context = {
+        "job_id": job.id,
+        "recording_id": job.recording_id,
+        "stage": job.kind,
+        "attempt": job.attempts,
+    }
+    logger.info("job_started", extra=context)
     try:
         handler(job)
     except RetryableJobError as error:
@@ -83,10 +92,8 @@ def process_one_job(
         logger.warning(
             "job_retry_scheduled" if retry_at else "job_failed",
             extra={
-                "job_id": job.id,
-                "recording_id": job.recording_id,
-                "stage": job.kind,
-                "attempt": job.attempts,
+                **context,
+                "duration_ms": round((monotonic() - started) * 1000),
                 "error_code": error.code,
             },
         )
@@ -95,22 +102,18 @@ def process_one_job(
         logger.error(
             "job_failed",
             extra={
-                "job_id": job.id,
-                "recording_id": job.recording_id,
-                "stage": job.kind,
-                "attempt": job.attempts,
+                **context,
+                "duration_ms": round((monotonic() - started) * 1000),
                 "error_code": error.code,
             },
         )
     except Exception:
         fail_job(database_path, job.id, "UNEXPECTED_JOB_ERROR", "job handler failed")
-        logger.exception(
+        logger.error(
             "job_failed",
             extra={
-                "job_id": job.id,
-                "recording_id": job.recording_id,
-                "stage": job.kind,
-                "attempt": job.attempts,
+                **context,
+                "duration_ms": round((monotonic() - started) * 1000),
                 "error_code": "UNEXPECTED_JOB_ERROR",
             },
         )
@@ -119,10 +122,8 @@ def process_one_job(
         logger.info(
             "job_succeeded",
             extra={
-                "job_id": job.id,
-                "recording_id": job.recording_id,
-                "stage": job.kind,
-                "attempt": job.attempts,
+                **context,
+                "duration_ms": round((monotonic() - started) * 1000),
             },
         )
     return True
