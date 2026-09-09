@@ -402,6 +402,17 @@
             "title": "Attempts",
             "type": "integer"
           },
+          "automatic_retry": {
+            "default": "none",
+            "enum": [
+              "none",
+              "scheduled",
+              "exhausted",
+              "stopped"
+            ],
+            "title": "Automatic Retry",
+            "type": "string"
+          },
           "created_at": {
             "title": "Created At",
             "type": "string"
@@ -428,6 +439,34 @@
             ],
             "title": "Error Message"
           },
+          "failure_category": {
+            "anyOf": [
+              {
+                "enum": [
+                  "transient",
+                  "action_required",
+                  "invalid_output",
+                  "internal"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure Category"
+          },
+          "failure_description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure Description"
+          },
           "id": {
             "title": "Id",
             "type": "string"
@@ -439,6 +478,39 @@
           "kind": {
             "title": "Kind",
             "type": "string"
+          },
+          "next_run_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Run At"
+          },
+          "recovery_action": {
+            "default": "none",
+            "enum": [
+              "retry",
+              "request_summary",
+              "retranscribe",
+              "none"
+            ],
+            "title": "Recovery Action",
+            "type": "string"
+          },
+          "recovery_description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recovery Description"
           },
           "settings_fingerprint": {
             "title": "Settings Fingerprint",
@@ -466,6 +538,49 @@
           "updated_at"
         ],
         "title": "JobResponse",
+        "type": "object"
+      },
+      "JobRetryRequest": {
+        "properties": {
+          "expected_revision": {
+            "minimum": 1.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "job_id": {
+            "minLength": 1,
+            "title": "Job Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "job_id",
+          "expected_revision"
+        ],
+        "title": "JobRetryRequest",
+        "type": "object"
+      },
+      "JobRetryResponse": {
+        "properties": {
+          "created": {
+            "title": "Created",
+            "type": "boolean"
+          },
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "job_id",
+          "status",
+          "created"
+        ],
+        "title": "JobRetryResponse",
         "type": "object"
       },
       "LectureSummary": {
@@ -2354,6 +2469,78 @@
         "summary": "Latest Retranscription",
         "tags": [
           "retranscriptions"
+        ]
+      }
+    },
+    "/api/recordings/{recording_id}/retry": {
+      "post": {
+        "operationId": "retry_recording_job_api_recordings__recording_id__retry_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "recording_id",
+            "required": true,
+            "schema": {
+              "title": "Recording Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JobRetryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobRetryResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Retry Recording Job",
+        "tags": [
+          "recordings"
         ]
       }
     },
