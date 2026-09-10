@@ -29,6 +29,7 @@ from app.long_transcript import (
 )
 from app.recovery import (
     RecoveryError,
+    RecoveryPlan,
     apply_completion,
     artifact_bytes,
     inspect_recovery,
@@ -267,11 +268,27 @@ class FakePipelineHandler:
                     self._generate_speaker_clips(
                         job.recording_id, Path(str(recording["source_path"])), plan.revision
                     )
-                    self._enqueue_speaker_finalization(plan.transcript)
+                    with connect(self.settings.database_path) as connection:
+                        connection.execute("BEGIN IMMEDIATE")
+                        apply_completion(
+                            connection,
+                            job,
+                            RecoveryPlan(
+                                "complete",
+                                plan.revision,
+                                followup=(
+                                    "finalize_speakers",
+                                    self.settings.speaker_finalization_settings_fingerprint,
+                                ),
+                            ),
+                        )
                     return True
                 if job.kind == "classify":
                     self._write_classified_transcript_artifacts(plan.transcript)
-                    self._finish_classification(job, plan.transcript)
+                    with connect(self.settings.database_path) as connection:
+                        connection.execute("BEGIN IMMEDIATE")
+                        completed = inspect_recovery(connection, self, job)
+                        apply_completion(connection, job, completed)
                     return True
                 if job.kind == "summarize":
                     from pydantic import TypeAdapter
@@ -300,7 +317,10 @@ class FakePipelineHandler:
                         data,
                         render_summary_markdown(summary, payload["category"]),
                     )
-                    self._enter(job.recording_id, RecordingStatus.COMPLETED)
+                    with connect(self.settings.database_path) as connection:
+                        connection.execute("BEGIN IMMEDIATE")
+                        completed = inspect_recovery(connection, self, job)
+                        apply_completion(connection, job, completed)
                     return True
             return False
         except RecoveryError as error:

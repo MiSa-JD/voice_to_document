@@ -17,7 +17,12 @@ from pydantic import TypeAdapter
 from app.config import Settings
 from app.db import connect, utc_now
 from app.jobs import Job
-from app.schema import CategorySummary, Transcript, validate_summary_evidence
+from app.schema import (
+    CategorySummary,
+    Transcript,
+    summary_template_for_category,
+    validate_summary_evidence,
+)
 from app.state import _enqueue
 from app.summary import _summary_fingerprint, summary_settings_fingerprint
 
@@ -116,16 +121,7 @@ def inspect_recovery(
     )
     transcript = None
     if content is not None:
-        try:
-            transcript = Transcript.model_validate_json(content)
-        except ValueError:
-            raise RecoveryError("RECOVERY_INPUT_INVALID") from None
-        if (
-            str(transcript.recording_id) != job.recording_id
-            or transcript.revision != revision
-            or transcript.content_sha256 != recording["content_sha256"]
-        ):
-            raise RecoveryError("RECOVERY_INPUT_INVALID")
+        transcript = validated_transcript(content, recording, revision)
         rows = connection.execute(
             "SELECT id, start_ms, end_ms, text FROM segments WHERE recording_id = ?",
             (job.recording_id,),
@@ -187,7 +183,17 @@ def inspect_recovery(
         "speaker-auto-match-v1",
     }:
         raise RecoveryError("RECOVERY_SETTINGS_CHANGED")
-    if job.kind == "render" and transcript is None:
+    if job.kind == "render":
+        if transcript is not None:
+            if (
+                transcript.classification is None
+                or transcript.classification.category != recording["category"]
+                or transcript.classification_source != recording["category_source"]
+            ):
+                raise RecoveryError("RECOVERY_INPUT_INVALID")
+            plan = document_completion_plan(connection, handler, job, transcript)
+            if plan.action == "complete":
+                return plan
         previous = connection.execute(
             "SELECT revision FROM artifacts WHERE recording_id = ? "
             "AND kind = 'transcript_json' AND revision < ? ORDER BY revision DESC LIMIT 1",
@@ -195,13 +201,17 @@ def inspect_recovery(
         ).fetchone()
         if previous is None:
             raise RecoveryError("RECOVERY_INPUT_MISSING")
-        artifact_bytes(
+        previous_revision = int(previous["revision"])
+        previous_content = artifact_bytes(
             connection,
             settings.transcript_root,
             job.recording_id,
             "transcript_json",
-            int(previous["revision"]),
+            previous_revision,
         )
+        if previous_content is None:
+            raise RecoveryError("RECOVERY_INPUT_MISSING")
+        validated_transcript(previous_content, recording, previous_revision)
         return RecoveryPlan("restart", revision)
     if transcript is None:
         raise RecoveryError("RECOVERY_INPUT_MISSING")
@@ -222,6 +232,7 @@ def inspect_recovery(
                     and payload["revision"] == revision
                     and payload["content_sha256"] == recording["content_sha256"]
                     and payload["category"] == category
+                    and summary.template == summary_template_for_category(category)
                     and _summary_fingerprint(payload["summary_fingerprint"], category)
                     == job.settings_fingerprint
                 )
@@ -260,31 +271,7 @@ def inspect_recovery(
                 or transcript.classification_source != recording["category_source"]
             ):
                 raise RecoveryError("RECOVERY_SETTINGS_CHANGED")
-            if (
-                artifact_bytes(
-                    connection,
-                    settings.document_root,
-                    job.recording_id,
-                    "transcript_markdown",
-                    revision,
-                )
-                is not None
-            ):
-                had_summary = connection.execute(
-                    "SELECT 1 FROM artifacts WHERE recording_id = ? AND kind = 'summary_json' "
-                    "AND revision < ? LIMIT 1",
-                    (job.recording_id, revision),
-                ).fetchone()
-                if had_summary or recording["category"] in settings.auto_summary_categories:
-                    follow = (
-                        "summarize",
-                        summary_settings_fingerprint(
-                            handler.summary_adapter, str(recording["category"])
-                        ),
-                    )
-                    return RecoveryPlan("complete", revision, transcript, "SUMMARIZING", follow)
-                return RecoveryPlan("complete", revision, transcript, "COMPLETED")
-            return RecoveryPlan("resume", revision, transcript)
+            return document_completion_plan(connection, handler, job, transcript)
     elif job.kind == "finalize_speakers":
         expected_fingerprint = settings.speaker_finalization_settings_fingerprint
         clips = connection.execute(
@@ -300,8 +287,6 @@ def inspect_recovery(
                 str(clip["kind"]),
                 int(clip["revision"]),
             )
-    elif job.kind == "render":
-        return RecoveryPlan("restart", revision, transcript)
     else:
         raise RecoveryError("RECOVERY_INPUT_INVALID")
     if job.settings_fingerprint != expected_fingerprint:
@@ -309,14 +294,65 @@ def inspect_recovery(
     return RecoveryPlan("restart", revision, transcript)
 
 
+def validated_transcript(content: bytes, recording: sqlite3.Row, revision: int) -> Transcript:
+    try:
+        transcript = Transcript.model_validate_json(content)
+    except ValueError:
+        raise RecoveryError("RECOVERY_INPUT_INVALID") from None
+    if (
+        str(transcript.recording_id) != recording["id"]
+        or transcript.revision != revision
+        or transcript.content_sha256 != recording["content_sha256"]
+    ):
+        raise RecoveryError("RECOVERY_INPUT_INVALID")
+    return transcript
+
+
+def document_completion_plan(
+    connection: sqlite3.Connection, handler: FakePipelineHandler, job: Job, transcript: Transcript
+) -> RecoveryPlan:
+    revision = transcript.revision
+    if (
+        artifact_bytes(
+            connection,
+            handler.settings.document_root,
+            job.recording_id,
+            "transcript_markdown",
+            revision,
+        )
+        is None
+    ):
+        return RecoveryPlan("resume", revision, transcript)
+    assert transcript.classification is not None
+    category = transcript.classification.category
+    had_summary = connection.execute(
+        "SELECT 1 FROM artifacts WHERE recording_id = ? AND kind = 'summary_json' "
+        "AND revision < ? LIMIT 1",
+        (job.recording_id, revision),
+    ).fetchone()
+    if had_summary or category in handler.settings.auto_summary_categories:
+        follow = ("summarize", summary_settings_fingerprint(handler.summary_adapter, category))
+        return RecoveryPlan("complete", revision, transcript, "SUMMARIZING", follow)
+    return RecoveryPlan("complete", revision, transcript, "COMPLETED")
+
+
 def apply_completion(connection: sqlite3.Connection, job: Job, plan: RecoveryPlan) -> None:
     status = plan.recording_status
     if plan.followup:
         kind, fingerprint = plan.followup
-        result = _enqueue(connection, job.recording_id, kind, plan.revision, fingerprint)
         followup = connection.execute(
-            "SELECT status FROM jobs WHERE id = ?", (result.job_id,)
+            "SELECT status, settings_fingerprint FROM jobs "
+            "WHERE recording_id = ? AND kind = ? AND input_revision = ? "
+            "ORDER BY created_at DESC, id DESC LIMIT 1",
+            (job.recording_id, kind, plan.revision),
         ).fetchone()
+        if followup is not None and followup["settings_fingerprint"] != fingerprint:
+            raise RecoveryError("RECOVERY_SETTINGS_CHANGED")
+        if followup is None:
+            result = _enqueue(connection, job.recording_id, kind, plan.revision, fingerprint)
+            followup = connection.execute(
+                "SELECT status FROM jobs WHERE id = ?", (result.job_id,)
+            ).fetchone()
         if followup["status"] not in ("queued", "running"):
             status = None
     if status:

@@ -262,3 +262,123 @@ def test_committed_retranscription_resumes_target_without_overwrite(
             connection.execute("SELECT content_hint FROM retranscription_requests").fetchone()[0]
             is None
         )
+
+
+@pytest.mark.parametrize("field", ["recording_id", "revision", "content_sha256"])
+def test_render_recovery_rejects_previous_transcript_identity(
+    settings_values: dict[str, Any], field: str
+) -> None:
+    import hashlib
+    import json
+    import uuid
+
+    from app.api import create_app
+    from fastapi.testclient import TestClient
+
+    settings, handler, job = prepare(settings_values)
+    handler(job)
+    complete_job(settings.database_path, job.id)
+    while process_one_job(settings.database_path, handler, LOGGER):
+        pass
+    client = TestClient(create_app(settings))
+    assert (
+        client.patch(
+            f"/api/recordings/{job.recording_id}/category",
+            json={"expected_revision": 1, "category": "일상 대화"},
+        ).status_code
+        == 200
+    )
+    render = claim_next_job(settings.database_path)
+    assert render is not None
+    with connect(settings.database_path) as connection:
+        row = connection.execute(
+            "SELECT * FROM artifacts WHERE kind = 'transcript_json' AND revision = 1"
+        ).fetchone()
+        path = settings.transcript_root / row["relative_path"]
+        payload = json.loads(path.read_bytes())
+        payload[field] = {
+            "recording_id": str(uuid.uuid4()),
+            "revision": 9,
+            "content_sha256": "f" * 64,
+        }[field]
+        content = json.dumps(payload).encode()
+        path.write_bytes(content)
+        connection.execute(
+            "UPDATE artifacts SET content_sha256 = ? WHERE id = ?",
+            (hashlib.sha256(content).hexdigest(), row["id"]),
+        )
+    recover_stale_jobs(handler, LOGGER)
+    with connect(settings.database_path) as connection:
+        assert (
+            connection.execute("SELECT error_code FROM jobs WHERE id = ?", (render.id,)).fetchone()[
+                0
+            ]
+            == "RECOVERY_INPUT_INVALID"
+        )
+
+
+@pytest.mark.parametrize("changed_settings", [False, True])
+def test_recovering_parent_does_not_repeat_failed_followup(
+    settings_values: dict[str, Any], changed_settings: bool
+) -> None:
+    from app.jobs import fail_job
+
+    settings, handler, job = prepare(settings_values)
+    while job.kind != "classify":
+        handler(job)
+        complete_job(settings.database_path, job.id)
+        next_job = claim_next_job(settings.database_path)
+        assert next_job is not None
+        job = next_job
+    handler(job)
+    followup = claim_next_job(settings.database_path)
+    assert followup is not None and followup.kind == "summarize"
+    fail_job(settings.database_path, followup.id, "SUMMARY_INVALID_OUTPUT", "invalid output")
+    if changed_settings:
+        with connect(settings.database_path) as connection:
+            connection.execute(
+                "UPDATE jobs SET settings_fingerprint = 'changed' WHERE id = ?", (followup.id,)
+            )
+    recover_stale_jobs(handler, LOGGER)
+    with connect(settings.database_path) as connection:
+        assert (
+            connection.execute("SELECT COUNT(*) FROM jobs WHERE kind = 'summarize'").fetchone()[0]
+            == 1
+        )
+        assert connection.execute("SELECT status FROM recordings").fetchone()[0] == "FAILED"
+        expected = "failed" if changed_settings else "succeeded"
+        assert (
+            connection.execute("SELECT status FROM jobs WHERE id = ?", (job.id,)).fetchone()[0]
+            == expected
+        )
+
+
+def test_completed_render_recovers_at_attempt_limit(settings_values: dict[str, Any]) -> None:
+    from app.api import create_app
+    from fastapi.testclient import TestClient
+
+    settings, handler, job = prepare(settings_values)
+    handler(job)
+    complete_job(settings.database_path, job.id)
+    while process_one_job(settings.database_path, handler, LOGGER):
+        pass
+    client = TestClient(create_app(settings))
+    assert (
+        client.patch(
+            f"/api/recordings/{job.recording_id}/category",
+            json={"expected_revision": 1, "category": "일상 대화"},
+        ).status_code
+        == 200
+    )
+    render = claim_next_job(settings.database_path)
+    assert render is not None and render.kind == "render"
+    handler(render)
+    with connect(settings.database_path) as connection:
+        connection.execute("UPDATE jobs SET attempts = 3 WHERE id = ?", (render.id,))
+    recover_stale_jobs(handler, LOGGER)
+    with connect(settings.database_path) as connection:
+        assert tuple(
+            connection.execute(
+                "SELECT status, attempts FROM jobs WHERE id = ?", (render.id,)
+            ).fetchone()
+        ) == ("succeeded", 3)
