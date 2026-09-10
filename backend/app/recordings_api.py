@@ -11,6 +11,14 @@ from pydantic import BaseModel, Field, TypeAdapter
 
 from app.config import Settings
 from app.db import connect, migrate_database, utc_now
+from app.job_failures import FailureCategory, job_failure_policy
+from app.job_retries import (
+    RecoveryAction,
+    enqueue_retry,
+    recovery_action,
+    recovery_handler,
+    retry_child,
+)
 from app.schema import CategorySummary, RecordingStatus
 from app.summary import configured_summary_settings_fingerprint
 
@@ -57,11 +65,20 @@ class RecordingItem(BaseModel):
     updated_at: str
 
 
+class OperationsOverview(BaseModel):
+    queued_jobs: int
+    running_jobs: int
+    review_recordings: int
+    failed_recordings: int
+    last_job_finished_at: str | None
+
+
 class RecordingListResponse(BaseModel):
     items: list[RecordingItem]
     total: int
     page_size: int = PAGE_SIZE
     status_counts: dict[RecordingStatus, int]
+    operations: OperationsOverview
 
 
 class SegmentResponse(BaseModel):
@@ -99,6 +116,23 @@ class JobResponse(BaseModel):
     error_message: str | None
     created_at: str
     updated_at: str
+    failure_category: FailureCategory | None = None
+    failure_description: str | None = None
+    next_run_at: str | None = None
+    automatic_retry: Literal["none", "scheduled", "exhausted", "stopped"] = "none"
+    recovery_action: RecoveryAction = "none"
+    recovery_description: str | None = None
+
+
+class JobRetryRequest(BaseModel):
+    job_id: str = Field(min_length=1)
+    expected_revision: int = Field(ge=1)
+
+
+class JobRetryResponse(BaseModel):
+    job_id: str
+    status: str
+    created: bool
 
 
 SpeakerMatchDecision = Literal[
@@ -219,6 +253,7 @@ def create_recordings_router(settings: Settings) -> APIRouter:
             parameters.append(category)
         where = " WHERE " + " AND ".join(clauses) if clauses else ""
         with connect(settings.database_path) as connection:
+            connection.execute("BEGIN")
             rows = connection.execute(
                 f"""
                 SELECT id, original_name, duration_ms, status, category,
@@ -239,13 +274,67 @@ def create_recordings_router(settings: Settings) -> APIRouter:
             count_rows = connection.execute(
                 "SELECT status, COUNT(*) AS count FROM recordings GROUP BY status"
             ).fetchall()
+            job_counts = connection.execute(
+                "SELECT COALESCE(SUM(status = 'queued'), 0) AS queued_jobs, "
+                "COALESCE(SUM(status = 'running'), 0) AS running_jobs, "
+                "MAX(CASE WHEN status IN ('succeeded', 'failed') THEN updated_at END) "
+                "AS last_job_finished_at FROM jobs"
+            ).fetchone()
+            recording_counts = connection.execute(
+                "SELECT COALESCE(SUM(needs_speaker_review = 1), 0) AS review_recordings, "
+                "COALESCE(SUM(status = 'FAILED'), 0) AS failed_recordings FROM recordings"
+            ).fetchone()
         counts = {value: 0 for value in RecordingStatus}
         counts.update({RecordingStatus(row["status"]): int(row["count"]) for row in count_rows})
         return RecordingListResponse(
             items=[_recording_item(dict(row)) for row in rows],
             total=total,
             status_counts=counts,
+            operations=OperationsOverview(**dict(job_counts), **dict(recording_counts)),
         )
+
+    @router.post(
+        "/{recording_id}/retry",
+        response_model=JobRetryResponse,
+        status_code=202,
+        responses={404: {"model": ApiErrorResponse}, 409: {"model": ApiErrorResponse}},
+    )
+    def retry_recording_job(recording_id: str, request: JobRetryRequest) -> JobRetryResponse:
+        migrate_database(settings.database_path)
+        inspector = recovery_handler(settings)
+        with connect(settings.database_path) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            recording = connection.execute(
+                "SELECT revision FROM recordings WHERE id = ?", (recording_id,)
+            ).fetchone()
+            row = connection.execute(
+                "SELECT * FROM jobs WHERE id = ? AND recording_id = ?",
+                (request.job_id, recording_id),
+            ).fetchone()
+            if recording is None or row is None:
+                raise ApiProblem(404, "JOB_NOT_FOUND", "녹음의 대상 작업을 찾을 수 없습니다.")
+            if (
+                recording["revision"] != request.expected_revision
+                or row["input_revision"] != request.expected_revision
+            ):
+                raise ApiProblem(
+                    409, "REVISION_CONFLICT", "입력이 변경되었습니다. 최신 내용을 확인해 주세요."
+                )
+            if row["status"] != "failed":
+                raise ApiProblem(409, "JOB_NOT_FAILED", "실패한 작업만 다시 시도할 수 있습니다.")
+            child = retry_child(connection, request.job_id)
+            if child is not None:
+                return JobRetryResponse(job_id=child["id"], status=child["status"], created=False)
+            action, description = recovery_action(connection, inspector, row)
+            if action != "retry":
+                raise ApiProblem(
+                    409, "JOB_RETRY_UNAVAILABLE", description or "현재 재시도할 수 없습니다."
+                )
+            job_id, created = enqueue_retry(connection, row)
+            status = connection.execute(
+                "SELECT status FROM jobs WHERE id = ?", (job_id,)
+            ).fetchone()[0]
+            return JobRetryResponse(job_id=job_id, status=status, created=created)
 
     @router.get(
         "/{recording_id}",
@@ -346,12 +435,26 @@ def create_recordings_router(settings: Settings) -> APIRouter:
             ).fetchall()
             jobs = connection.execute(
                 """
-                SELECT id, kind, status, attempts, input_revision, settings_fingerprint,
-                       error_code, error_message, created_at, updated_at
+                SELECT id, recording_id, kind, status, attempts, input_revision,
+                       settings_fingerprint,
+                       error_code, error_message, created_at, updated_at, available_at
                 FROM jobs WHERE recording_id = ? ORDER BY created_at DESC, id DESC
                 """,
                 (recording_id,),
             ).fetchall()
+            job_responses = []
+            inspector = (
+                recovery_handler(settings)
+                if any(row["status"] == "failed" for row in jobs)
+                else None
+            )
+            for row in jobs:
+                item = _job_response(row)
+                if inspector is not None:
+                    item.recovery_action, item.recovery_description = recovery_action(
+                        connection, inspector, row
+                    )
+                job_responses.append(item)
         candidates_by_speaker: dict[str, list[SpeakerMatchCandidateResponse]] = {}
         for candidate in candidate_rows:
             value = dict(candidate)
@@ -379,12 +482,17 @@ def create_recordings_router(settings: Settings) -> APIRouter:
         summary_status, summary_policy, summary_job, summary_can_request = _summary_state(
             settings, recording, jobs, artifacts, summary
         )
+        if not summary_can_request:
+            for item in job_responses:
+                if item.recovery_action == "request_summary":
+                    item.recovery_action = "none"
+                    item.recovery_description = "최신 입력의 요약 요청 가능 상태를 확인해 주세요."
         return RecordingDetailResponse(
             recording=_recording_item(dict(recording)),
             speakers=speaker_responses,
             segments=[_segment_response(dict(row)) for row in segments],
             artifacts=[ArtifactResponse.model_validate(dict(row)) for row in artifacts],
-            jobs=[JobResponse.model_validate(dict(row)) for row in jobs],
+            jobs=job_responses,
             summary=summary,
             summary_status=summary_status,
             summary_policy=summary_policy,
@@ -739,7 +847,7 @@ def _summary_state(
         ),
         None,
     )
-    current_job = JobResponse.model_validate(dict(current_row)) if current_row is not None else None
+    current_job = _job_response(current_row) if current_row is not None else None
     status: Literal["not_requested", "queued", "running", "succeeded", "stale", "failed"]
     if summary is not None:
         status = "succeeded"
@@ -771,3 +879,21 @@ def _summary_state(
         and not (policy == "automatic" and status == "not_requested")
     )
     return status, policy, current_job, can_request
+
+
+def _job_response(row: sqlite3.Row) -> JobResponse:
+    item = JobResponse.model_validate(dict(row))
+    policy = job_failure_policy(item.error_code)
+    if policy is not None:
+        item.failure_category = policy.category
+        item.failure_description = policy.message
+        item.error_message = policy.message
+        if item.status == "queued":
+            item.automatic_retry = "scheduled"
+        elif item.status == "failed":
+            item.automatic_retry = (
+                "exhausted" if policy.retryable and item.attempts >= 3 else "stopped"
+            )
+    if item.status == "queued" and "available_at" in row.keys():  # noqa: SIM118
+        item.next_run_at = str(row["available_at"])
+    return item

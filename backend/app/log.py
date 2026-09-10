@@ -28,7 +28,8 @@ class JsonFormatter(logging.Formatter):
             }
         )
         if record.exc_info:
-            payload["exception"] = self.formatException(record.exc_info)
+            exception_type = record.exc_info[0]
+            payload["exception_type"] = exception_type.__name__ if exception_type else None
         return json.dumps(payload, ensure_ascii=False, default=str)
 
 

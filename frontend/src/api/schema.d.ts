@@ -141,6 +141,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/recordings/{recording_id}/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Retry Recording Job */
+        post: operations["retry_recording_job_api_recordings__recording_id__retry_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/recordings/{recording_id}/speakers/{local_speaker_id}": {
         parameters: {
             query?: never;
@@ -400,24 +417,60 @@ export interface components {
         JobResponse: {
             /** Attempts */
             attempts: number;
+            /**
+             * Automatic Retry
+             * @default none
+             * @enum {string}
+             */
+            automatic_retry: "none" | "scheduled" | "exhausted" | "stopped";
             /** Created At */
             created_at: string;
             /** Error Code */
             error_code: string | null;
             /** Error Message */
             error_message: string | null;
+            /** Failure Category */
+            failure_category?: ("transient" | "action_required" | "invalid_output" | "internal") | null;
+            /** Failure Description */
+            failure_description?: string | null;
             /** Id */
             id: string;
             /** Input Revision */
             input_revision: number;
             /** Kind */
             kind: string;
+            /** Next Run At */
+            next_run_at?: string | null;
+            /**
+             * Recovery Action
+             * @default none
+             * @enum {string}
+             */
+            recovery_action: "retry" | "request_summary" | "retranscribe" | "none";
+            /** Recovery Description */
+            recovery_description?: string | null;
             /** Settings Fingerprint */
             settings_fingerprint: string;
             /** Status */
             status: string;
             /** Updated At */
             updated_at: string;
+        };
+        /** JobRetryRequest */
+        JobRetryRequest: {
+            /** Expected Revision */
+            expected_revision: number;
+            /** Job Id */
+            job_id: string;
+        };
+        /** JobRetryResponse */
+        JobRetryResponse: {
+            /** Created */
+            created: boolean;
+            /** Job Id */
+            job_id: string;
+            /** Status */
+            status: string;
         };
         /** LectureSummary */
         LectureSummary: {
@@ -451,6 +504,19 @@ export interface components {
              * @enum {string}
              */
             template: "meeting";
+        };
+        /** OperationsOverview */
+        OperationsOverview: {
+            /** Failed Recordings */
+            failed_recordings: number;
+            /** Last Job Finished At */
+            last_job_finished_at: string | null;
+            /** Queued Jobs */
+            queued_jobs: number;
+            /** Review Recordings */
+            review_recordings: number;
+            /** Running Jobs */
+            running_jobs: number;
         };
         /** OtherSummary */
         OtherSummary: {
@@ -573,6 +639,7 @@ export interface components {
         RecordingListResponse: {
             /** Items */
             items: components["schemas"]["RecordingItem"][];
+            operations: components["schemas"]["OperationsOverview"];
             /**
              * Page Size
              * @default 50
@@ -1220,6 +1287,59 @@ export interface operations {
             };
             /** @description Not Found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    retry_recording_job_api_recordings__recording_id__retry_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                recording_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["JobRetryRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobRetryResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorResponse"];
+                };
+            };
+            /** @description Conflict */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

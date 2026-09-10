@@ -205,7 +205,7 @@ test('transcript, category, summary, job 이력을 표시한다', async () => {
   ).toBeInTheDocument();
   expect(screen.getByText('화자 미배정')).toBeInTheDocument();
   expect(screen.getByText('초안 준비 계획 확인')).toBeInTheDocument();
-  expect(screen.getByText('transcribe')).toBeInTheDocument();
+  expect(screen.getByText('전사')).toBeInTheDocument();
 });
 
 test('404를 일반 빈 상세로 오해하지 않는다', async () => {
@@ -264,6 +264,8 @@ test('실패 코드와 사용자 조치, 자동 재시도 상태를 표시한다
                   input_revision: 1,
                   settings_fingerprint: 'real',
                   error_code: 'MODEL_DOWNLOAD_FAILED',
+                  automatic_retry: 'scheduled',
+                  failure_category: 'transient',
                   error_message:
                     '모델을 내려받지 못했습니다. 네트워크와 모델 캐시 권한을 확인하세요.',
                   created_at: 'now',
@@ -744,4 +746,105 @@ test('요약 revision 충돌은 최신 상세를 다시 불러오도록 안내�
     ),
   ).toBeInTheDocument();
   await waitFor(() => expect(detailCalls).toBeGreaterThan(1));
+});
+
+test('서버가 허용한 재시도를 키보드로 요청하고 요청 중 중복 입력을 막는다', async () => {
+  let finish: ((value: Response) => void) | undefined;
+  const retryResponse = new Promise<Response>((resolve) => {
+    finish = resolve;
+  });
+  const detail = summaryDetail('not_requested', {
+    jobs: [
+      {
+        id: 'failed-job',
+        kind: 'classify',
+        status: 'failed',
+        attempts: 1,
+        error_code: 'MALFORMED_CLASSIFICATION',
+        failure_category: 'invalid_output',
+        failure_description: '분류 결과가 유효하지 않습니다.',
+        automatic_retry: 'stopped',
+        recovery_action: 'retry',
+      },
+    ],
+  });
+  const fetchMock = vi.fn().mockImplementation((url: string) => {
+    if (url.endsWith('/retry')) return retryResponse;
+    return Promise.resolve(
+      url.endsWith('/retranscriptions/latest')
+        ? response(404, {
+            error: { code: 'RETRANSCRIPTION_NOT_FOUND', message: '없음' },
+          })
+        : response(200, detail),
+    );
+  });
+  vi.stubGlobal('fetch', fetchMock);
+  renderDetail();
+  const button = await screen.findByRole('button', {
+    name: '분류 작업 다시 시도',
+  });
+  expect(screen.getByText('유효하지 않은 출력')).toBeInTheDocument();
+  const user = userEvent.setup();
+  button.focus();
+  await user.keyboard('{Enter}');
+  expect(button).toBeDisabled();
+  await user.keyboard('{Enter}');
+  expect(
+    fetchMock.mock.calls.filter(([url]) => url.endsWith('/retry')),
+  ).toHaveLength(1);
+  const request = fetchMock.mock.calls.find(([url]) => url.endsWith('/retry'))!;
+  expect(JSON.parse(request[1].body)).toEqual({
+    job_id: 'failed-job',
+    expected_revision: 2,
+  });
+  finish!(
+    response(202, { job_id: 'new-job', status: 'queued', created: true }),
+  );
+  expect(
+    await screen.findByText('재시도 작업을 등록했습니다.'),
+  ).toBeInTheDocument();
+});
+
+test('재시도 revision 충돌을 안내하고 최신 내용을 다시 불러온다', async () => {
+  const detail = summaryDetail('not_requested', {
+    jobs: [
+      {
+        id: 'failed-job',
+        kind: 'render',
+        status: 'failed',
+        attempts: 3,
+        recovery_action: 'retry',
+      },
+    ],
+  });
+  const fetchMock = vi.fn().mockImplementation((url: string) =>
+    Promise.resolve(
+      url.endsWith('/retry')
+        ? response(409, {
+            error: { code: 'REVISION_CONFLICT', message: '충돌' },
+          })
+        : url.endsWith('/retranscriptions/latest')
+          ? response(404, {
+              error: { code: 'RETRANSCRIPTION_NOT_FOUND', message: '없음' },
+            })
+          : response(200, detail),
+    ),
+  );
+  vi.stubGlobal('fetch', fetchMock);
+  renderDetail();
+  await userEvent
+    .setup()
+    .click(
+      await screen.findByRole('button', { name: '문서 반영 작업 다시 시도' }),
+    );
+  expect(
+    await screen.findByText(/입력 또는 작업 상태가 변경되었습니다/),
+  ).toBeInTheDocument();
+  await waitFor(() =>
+    expect(
+      fetchMock.mock.calls.filter(
+        ([url]) => url === '/api/recordings/recording-id',
+      ).length,
+    ).toBeGreaterThan(1),
+  );
 });
