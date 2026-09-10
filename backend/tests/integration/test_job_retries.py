@@ -203,6 +203,28 @@ def test_retranscription_failure_requires_new_hints(settings_values: dict[str, A
             ).fetchone()
         ) == (None, None)
 
+    # Re-entering the same options explicitly is a new request, not restored private hints.
+    replacement = client.post(
+        f"/api/recordings/{first.recording_id}/retranscriptions",
+        json={
+            "expected_revision": 1,
+            "language": "en",
+            "content_description": "test hint",
+            "terms": ["test"],
+            "confirm_impact": True,
+        },
+    )
+    assert replacement.status_code == 202
+    assert replacement.json()["request_id"] != requested.json()["request_id"]
+    while process_one_job(settings.database_path, handler, LOGGER):
+        pass
+    with connect(settings.database_path) as connection:
+        assert (
+            connection.execute("SELECT status FROM jobs WHERE id = ?", (rerun.id,)).fetchone()[0]
+            == "failed"
+        )
+        assert connection.execute("SELECT revision FROM recordings").fetchone()[0] == 2
+
 
 def test_automatic_retry_timing_and_exhaustion_are_server_decisions(
     settings_values: dict[str, Any],

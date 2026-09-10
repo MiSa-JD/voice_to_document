@@ -136,9 +136,10 @@ def create_retranscriptions_router(settings: Settings) -> APIRouter:
                 )
             duplicate = connection.execute(
                 """
-                SELECT id FROM retranscription_requests
-                WHERE recording_id = ? AND base_revision = ?
-                  AND requested_language = ? AND hint_hash = ?
+                SELECT requests.id FROM retranscription_requests AS requests
+                JOIN jobs ON jobs.id = requests.job_id
+                WHERE requests.recording_id = ? AND base_revision = ?
+                  AND requested_language = ? AND hint_hash = ? AND jobs.status != 'failed'
                 LIMIT 1
                 """,
                 (recording_id, current_revision, request.language, hint_hash),
