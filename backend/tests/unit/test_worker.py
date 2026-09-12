@@ -10,11 +10,13 @@ from typing import Any
 
 import pytest
 from app.config import Settings
+from app.job_retries import recovery_handler
 from app.long_transcript import LongTranscriptClassifier
 from app.openai_classification import OpenAIClassificationAdapter
 from app.openai_summary import OpenAISummaryAdapter
 from app.pipeline import FakePipelineHandler
 from app.real_pipeline import RealSpeechPipelineHandler
+from app.summary import summary_settings_fingerprint
 from app.worker import build_handler
 
 
@@ -72,6 +74,8 @@ def test_worker_builds_all_speech_and_document_mode_combinations(
         {
             "SERVICE_NAME": "worker",
             "SUMMARY_REQUEST_TIMEOUT_SECONDS": 451,
+            "CLASSIFICATION_CONTEXT_MAX_CHARS": 54321,
+            "SUMMARY_CONTEXT_MAX_CHARS": 65432,
             "SPEECH_MODE": speech_mode,
             "DOCUMENT_MODE": document_mode,
             "HF_TOKEN": "test-token" if speech_mode == "real" else "",
@@ -82,11 +86,34 @@ def test_worker_builds_all_speech_and_document_mode_combinations(
         }
     )
 
-    handler = build_handler(Settings(**settings_values), logging.getLogger("test"))
+    settings = Settings(**settings_values)
+    handler = build_handler(settings, logging.getLogger("test"))
+    inspector = recovery_handler(settings)
 
     assert isinstance(handler, handler_type)
     assert isinstance(handler, FakePipelineHandler)
     assert isinstance(handler.classification_adapter, LongTranscriptClassifier)
+    assert type(handler) is handler_type
+    assert type(inspector) is FakePipelineHandler
+    assert inspector.settings.effective_speech_mode == speech_mode
+    assert inspector.settings.effective_document_mode == document_mode
+    assert settings.llm_api_key is not None
+    assert settings.llm_api_key.get_secret_value() == ("test-key" if real_document else "")
+    assert inspector.settings.llm_api_key is not None
+    assert inspector.settings.llm_api_key.get_secret_value() == ""
+    assert handler.classification_adapter.max_context_chars == 54321
+    assert (
+        inspector.classification_adapter.fingerprint == handler.classification_adapter.fingerprint
+    )
+    assert inspector.summary_adapter.fingerprint == handler.summary_adapter.fingerprint
+    for category in settings.categories:
+        assert summary_settings_fingerprint(
+            inspector.summary_adapter, category
+        ) == summary_settings_fingerprint(handler.summary_adapter, category)
+    assert (
+        inspector.settings.speaker_finalization_settings_fingerprint
+        == settings.speaker_finalization_settings_fingerprint
+    )
     assert (
         isinstance(handler.classification_adapter.direct_adapter, OpenAIClassificationAdapter)
         is real_document
@@ -94,3 +121,29 @@ def test_worker_builds_all_speech_and_document_mode_combinations(
     if real_document:
         assert isinstance(handler.summary_adapter, OpenAISummaryAdapter)
         assert handler.summary_adapter.timeout_seconds == 451
+        assert handler.summary_adapter.max_context_chars == 65432
+        assert handler.summary_adapter.api_key == "test-key"
+        assert handler.summary_adapter.model == "test-snapshot"
+        backend = handler.classification_adapter.direct_adapter
+        assert isinstance(backend, OpenAIClassificationAdapter)
+        assert backend.api_key == "test-key" and backend.model == "test-snapshot"
+        assert backend.base_url == handler.summary_adapter.base_url == "https://api.openai.com/v1"
+        assert isinstance(inspector.summary_adapter, OpenAISummaryAdapter)
+        assert inspector.summary_adapter.api_key == ""
+        assert isinstance(inspector.classification_adapter, LongTranscriptClassifier)
+        inspection_backend = inspector.classification_adapter.direct_adapter
+        assert isinstance(inspection_backend, OpenAIClassificationAdapter)
+        assert inspection_backend.api_key == ""
+
+
+def test_api_recovery_import_does_not_import_worker_or_speech_runtime() -> None:
+    subprocess.run(
+        [
+            ".venv/bin/python",
+            "-c",
+            "import sys; import app.job_retries; "
+            "assert not {'app.worker', 'app.real_pipeline', 'whisperx', 'torch'} "
+            "& sys.modules.keys()",
+        ],
+        check=True,
+    )
