@@ -12,6 +12,7 @@ from app.config import Settings
 from app.db import connect
 from app.ingest import ingest_file
 from app.job_failures import job_failure_policy
+from app.job_retries import enqueue_retry
 from app.jobs import Job, claim_next_job, complete_job, fail_job
 from app.pipeline import FakePipelineHandler
 from app.runtime import process_one_job
@@ -66,6 +67,121 @@ def test_retry_keeps_failure_history_and_gets_new_budget(values: dict[str, Any],
 @pytest.fixture
 def values(settings_values: dict[str, Any]) -> dict[str, Any]:
     return settings_values
+
+
+@pytest.fixture(params=["missing", "file", "inaccessible"])
+def real_api_values(
+    settings_values: dict[str, Any], request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> dict[str, Any]:
+    cache = settings_values["MODEL_CACHE_ROOT"] / "unusable"
+    if request.param == "file":
+        cache.touch()
+    elif request.param == "inaccessible":
+        cache.mkdir(mode=0)
+        request.addfinalizer(lambda: cache.chmod(0o700))
+
+    def forbidden(*args: object, **kwargs: object) -> None:
+        pytest.fail("API inspection must not initialize speech or call a provider")
+
+    for target in (
+        "app.worker.build_handler",
+        "app.real_pipeline.RealSpeechPipelineHandler.__init__",
+        "app.transcription._load_whisperx_runtime",
+        "app.alignment._load_whisperx_alignment_runtime",
+        "app.diarization._load_whisperx_diarization_runtime",
+        "urllib.request.urlopen",
+    ):
+        monkeypatch.setattr(target, forbidden)
+    return {
+        **settings_values,
+        "SERVICE_NAME": "api",
+        "SPEECH_MODE": "real",
+        "DOCUMENT_MODE": "real",
+        "MODEL_CACHE_ROOT": cache,
+        "LLM_PROVIDER": "openai_compatible",
+        "LLM_BASE_URL": "http://127.0.0.1:1/v1",
+        "LLM_MODEL": "test-snapshot",
+        "LLM_API_KEY": "",
+        "HF_TOKEN": "",
+    }
+
+
+@pytest.mark.parametrize("completed", [False, True])
+def test_real_api_detail_preserves_failed_history_without_model_cache(
+    real_api_values: dict[str, Any], completed: bool
+) -> None:
+    settings, client, job = failed_job(real_api_values)
+    with connect(settings.database_path) as connection:
+        connection.execute("UPDATE recordings SET status = 'FAILED'")
+    if completed:
+        with connect(settings.database_path) as connection:
+            row = connection.execute("SELECT * FROM jobs WHERE id = ?", (job.id,)).fetchone()
+            enqueue_retry(connection, row)
+        handler = FakePipelineHandler(settings, LOGGER)
+        while process_one_job(settings.database_path, handler, LOGGER):
+            pass
+    response = client.get(f"/api/recordings/{job.recording_id}")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["recording"]["status"] == ("COMPLETED" if completed else "FAILED")
+    if completed:
+        assert payload["segments"] and payload["artifacts"]
+    item = next(row for row in payload["jobs"] if row["id"] == job.id)
+    assert item["status"] == "failed"
+    assert item["recovery_action"] == ("none" if completed else "retry")
+
+
+def test_real_api_concurrent_retry_preserves_history(real_api_values: dict[str, Any]) -> None:
+    settings, client, job = failed_job(real_api_values)
+
+    def submit(_: int) -> dict[str, Any]:
+        response = client.post(
+            f"/api/recordings/{job.recording_id}/retry",
+            json={"job_id": job.id, "expected_revision": 1},
+        )
+        assert response.status_code == 202
+        return dict(response.json())
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        responses = list(pool.map(submit, range(2)))
+    assert len({row["job_id"] for row in responses}) == 1
+    assert sum(row["created"] for row in responses) == 1
+    assert submit(0) == {**responses[0], "created": False}
+    with connect(settings.database_path) as connection:
+        rows = connection.execute("SELECT id, status FROM jobs").fetchall()
+        assert {(row["id"], row["status"]) for row in rows} == {
+            (job.id, "failed"),
+            (responses[0]["job_id"], "queued"),
+        }
+
+
+@pytest.mark.parametrize("change", ["revision", "active", "missing_source", "fingerprint"])
+def test_real_api_recovery_conflicts_remain_409(
+    real_api_values: dict[str, Any], change: str
+) -> None:
+    settings, client, job = failed_job(real_api_values)
+    with connect(settings.database_path) as connection:
+        if change == "revision":
+            connection.execute("UPDATE recordings SET revision = 2")
+        elif change == "fingerprint":
+            connection.execute("UPDATE jobs SET settings_fingerprint = 'changed'")
+        elif change == "active":
+            from app.state import _enqueue
+
+            _enqueue(connection, job.recording_id, "render", 1, "render-v1")
+        else:
+            (settings.recording_input_dir / "complete.m4a").unlink()
+    detail = client.get(f"/api/recordings/{job.recording_id}")
+    assert detail.status_code == 200
+    item = next(row for row in detail.json()["jobs"] if row["id"] == job.id)
+    assert item["recovery_action"] == "none"
+    assert (
+        client.post(
+            f"/api/recordings/{job.recording_id}/retry",
+            json={"job_id": job.id, "expected_revision": 1},
+        ).status_code
+        == 409
+    )
 
 
 def test_concurrent_retry_creates_only_one_child(settings_values: dict[str, Any]) -> None:

@@ -10,6 +10,7 @@ from pydantic import SecretStr
 
 from app.config import Settings
 from app.db import utc_now
+from app.document_adapters import build_document_adapters
 from app.jobs import Job
 from app.pipeline import FakePipelineHandler
 from app.recovery import RecoveryError, inspect_recovery, validate_source
@@ -19,14 +20,15 @@ RecoveryAction = Literal["retry", "request_summary", "retranscribe", "none"]
 
 
 def recovery_handler(settings: Settings) -> FakePipelineHandler:
-    from app.worker import build_handler
-
-    # Construction is lazy: no model loading, GPU execution or provider calls for API inspection.
-    handler = build_handler(
-        settings.model_copy(update={"llm_api_key": SecretStr("")}), logging.getLogger("api")
+    # Inspection needs document fingerprints and settings, never speech initialization.
+    config = settings.model_copy(update={"llm_api_key": SecretStr("")})
+    classification_adapter, summary_adapter = build_document_adapters(config)
+    return FakePipelineHandler(
+        config,
+        logging.getLogger("api"),
+        classification_adapter=classification_adapter,
+        summary_adapter=summary_adapter,
     )
-    assert isinstance(handler, FakePipelineHandler)
-    return handler
 
 
 def row_job(row: sqlite3.Row) -> Job:
