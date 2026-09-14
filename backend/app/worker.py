@@ -7,11 +7,9 @@ import threading
 from app.config import Settings
 from app.db import migrate_database
 from app.discovery import StabilityTracker
+from app.document_adapters import build_document_adapters
 from app.jobs import Job
 from app.log import configure_logging
-from app.long_transcript import LongTranscriptClassifier
-from app.openai_classification import OpenAIClassificationAdapter
-from app.openai_summary import OpenAISummaryAdapter
 from app.pipeline import FakePipelineHandler
 from app.real_pipeline import RealSpeechPipelineHandler
 from app.reconciliation import reconcile_markdown_artifacts, reconcile_summary_artifacts
@@ -77,29 +75,7 @@ def _run_locked(
 
 
 def build_handler(config: Settings, logger: logging.Logger) -> JobHandler:
-    classification_adapter = None
-    summary_adapter = None
-    if config.effective_document_mode == "real":
-        if config.llm_api_key is None or config.llm_base_url is None or config.llm_model is None:
-            raise RuntimeError("real document settings were not validated")
-        backend = OpenAIClassificationAdapter(
-            base_url=config.llm_base_url,
-            api_key=config.llm_api_key.get_secret_value(),
-            model=config.llm_model,
-        )
-        classification_adapter = LongTranscriptClassifier(
-            backend,
-            backend,
-            backend,
-            max_context_chars=config.classification_context_max_chars,
-        )
-        summary_adapter = OpenAISummaryAdapter(
-            base_url=config.llm_base_url,
-            api_key=config.llm_api_key.get_secret_value(),
-            model=config.llm_model,
-            max_context_chars=config.summary_context_max_chars,
-            timeout_seconds=config.summary_request_timeout_seconds,
-        )
+    classification_adapter, summary_adapter = build_document_adapters(config)
     if config.effective_speech_mode == "real":
         return RealSpeechPipelineHandler(
             config,

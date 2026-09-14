@@ -73,3 +73,16 @@ test "$(sha256sum "$markdown_path" | awk '{print $1}')" = "$markdown_digest"
 docker compose exec -T worker python backend/tests/recovery_probe.py
 
 E2E_RETRY_SCENARIO=1 npm --prefix frontend run test:e2e -- --grep "실패한 문서 작업"
+
+# Reuse only synthetic artifacts; the real/real scenario runs API and web, never a worker.
+docker compose stop worker
+export SPEECH_MODE=real
+export DOCUMENT_MODE=real
+export HF_TOKEN=
+export LLM_API_KEY=
+export LLM_PROVIDER=openai_compatible
+export LLM_BASE_URL=http://127.0.0.1:1/v1
+export LLM_MODEL=inspection-test
+docker compose up --no-deps --wait api
+docker compose restart web
+E2E_REAL_RECOVERY_SCENARIO=1 npm --prefix frontend run test:e2e -- --grep "실제 모드 API"
